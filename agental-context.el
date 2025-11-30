@@ -61,11 +61,17 @@ N-CHARS is max size."
   "Get cursor prompt."
   (let* ((thing (agental-context--symbol))
          (function (agental-context--function))
+         (name (buffer-name (current-buffer)))
+         (path (buffer-file-name (current-buffer)))
          (prompts (list (if thing
                             (format "Cursor point (%s)" thing)
                           "")
                         (if function
                             (format "Cursor function or Heading (%s)" function)
+                          "")
+                        (format "Cursor buffer name (%s)" name)
+                        (if path
+                            (format "Cursor file path (%s)" (file-truename path))
                           ""))))
     (when prompts
       (format "[%s]"
