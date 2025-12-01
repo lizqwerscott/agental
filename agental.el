@@ -36,11 +36,44 @@
   "Agental."
   :group 'agental)
 
-(defun agental--create-buffer (buffer-name prompt)
+(defun agental--send (workspace-context)
+  "Submit this prompt to the current LLM backend.
+
+WORKSPACE-CONTEXT is now workspace content.
+
+By default, the contents of the buffer up to the cursor position
+are sent.  If the region is active, its contents are sent
+instead.
+
+The response from the LLM is inserted below the cursor position
+at the time of sending.  To change this behavior or model
+parameters, use prefix arg ARG activate a transient menu with
+more options instead.
+
+This command is asynchronous, you can continue to use Emacs while
+waiting for the response."
+  (let ((fsm (gptel-make-fsm :handlers gptel-send--handlers)))
+    (gptel-request nil
+      :stream gptel-stream
+      :transforms (append gptel-prompt-transform-functions
+                          (list
+                           (lambda (callback fsm)
+                             (agental-context--transform-add-context workspace-context callback fsm))))
+      :fsm fsm)
+    (message "Querying %s..."
+             (thread-first (gptel-fsm-info fsm)
+                           (plist-get :backend)
+                           (or gptel-backend)
+                           (gptel-backend-name))))
+  (gptel--update-status " Waiting..." 'warning))
+
+
+(defun agental--create-buffer (buffer-name prompt context)
   "Create or switch to a GPT session buffer and initialize it.
 
 BUFFER-NAME is the name of the target buffer.
 PROMPT is the prompt text to insert during initialization.
+CONTEXT is the context.
 
 This function performs the following operations:
 1. Create or switch to the buffer with the given name
@@ -71,7 +104,7 @@ already contains content, the prompt is appended at the end."
       (insert prompt))
     (display-buffer (current-buffer) gptel-display-buffer-action)
     (unless gptel-mode (gptel-mode 1))
-    (gptel-send)))
+    (agental--send context)))
 
 ;;;###autoload
 (defun agental-global-chat ()
@@ -97,12 +130,11 @@ already contains content, the prompt is appended at the end."
          (gptel-display-buffer-action '(display-buffer-reuse-window
                                         (body-function . select-window)))
          (buffer-name "*global-chat*")
-         (prompt (format "@%s %s%s"
+         (prompt (format "@%s %s"
                          preset
-                         message
-                         (concat " " cursor-context)))
-         (gptel-context (append gptel-context (list (agental-context-buffer-content)))))
-    (agental--create-buffer buffer-name prompt)))
+                         message))
+         (workspace-context (agental-context-workspace-content)))
+    (agental--create-buffer buffer-name prompt workspace-context)))
 
 ;;;###autoload
 (defun agental-project-chat ()
@@ -134,8 +166,8 @@ already contains content, the prompt is appended at the end."
                               preset
                               message
                               (concat " " cursor-context)))
-              (gptel-context (append gptel-context (list (agental-context-buffer-content)))))
-    (agental--create-buffer buffer-name prompt)))
+              (workspace-context (agental-context-workspace-content)))
+    (agental--create-buffer buffer-name prompt workspace-context)))
 
 (provide 'agental)
 ;;; agental.el ends here
