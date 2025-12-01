@@ -122,12 +122,14 @@ corresponding VALUE. Return the resulting prompt as a string."
     (agental-prompts--make prompt-template params-alist)))
 
 (defun agental-prompts--make (prompt-template &optional params-alist)
-  "Generate a prompt from PROMPT-TEMPLATE by parameters from PARAMS-ALIST.
-PROMPT-TEMPLATE should be a cons cell (NAME . (CONTENT . PARAMS))
-as returned by `agental-prompts--read'.
-PARAMS-ALIST is an alist where each element is (PARAM-NAME . VALUE).
-All occurrences of {{PARAM-NAME}} in the template content are replaced with the
-corresponding VALUE. Return the resulting prompt as a string."
+  "Generate a prompt string from PROMPT-TEMPLATE using PARAMS-ALIST.
+
+PROMPT-TEMPLATE should be a plist with keys :name, :system, and :params
+as returned by `agental-prompts--read'.  PARAMS-ALIST is an alist where
+each element is (PARAM-NAME . VALUE).
+
+Replace all occurrences of {{PARAM-NAME}} in the template content with
+the corresponding VALUE.  Return the resulting prompt as a string."
   (let* ((content (plist-get prompt-template :system))
          (params (plist-get prompt-template :params)))
     (if params-alist
@@ -146,7 +148,11 @@ corresponding VALUE. Return the resulting prompt as a string."
 
 ;;;###autoload
 (defun agental-prompts-update ()
-  "Update all dir prompts."
+  "Update all prompt templates from directories in `agental-prompts-path'.
+
+Scan each directory in `agental-prompts-path' for text files with
+extensions .txt, .md, or .org.  Read each file as a prompt template
+using `agental-prompts--read' and add it to `agental-prompts-templates'."
   (dolist (dir agental-prompts-path)
     (when-let* ((files (directory-files (file-truename dir) t "\\(\\.txt\\|\\.md\\|\\.org\\)$")))
       (dolist (file files)
