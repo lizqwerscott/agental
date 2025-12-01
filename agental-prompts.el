@@ -55,6 +55,7 @@ return as well.
 If PATH cannot be read or is not a valid file, return nil."
   (when-let* ((path (file-truename path)))
     (let ((name (intern (file-name-sans-extension (file-name-nondirectory path))))
+          (content)
           (params)
           (res))
       (with-temp-buffer
@@ -96,13 +97,15 @@ If PATH cannot be read or is not a valid file, return nil."
 
                 (setq res (append res parsed-yaml))))))
 
+        (setq content (buffer-substring-no-properties (point) (point-max)))
+
         (while (search-forward-regexp "{{\\([^}]+\\)}}" nil t)
           (let ((param (match-string 1)))
             (unless (member param params)
               (push param params))))
 
         (setq res (append res
-                          (list :system (buffer-substring-no-properties (point) (point-max))
+                          (list :system content
                                 :params params))))
       (cons name res))))
 
