@@ -94,8 +94,7 @@ already contains content, the prompt is appended at the end."
                                                    'face 'font-lock-comment-face)
                                        preset)
                                nil nil nil t))
-         (gptel-display-buffer-action '(nil
-                                        (display-buffer-reuse-mode-window display-buffer-at-bottom)
+         (gptel-display-buffer-action '(display-buffer-reuse-window
                                         (body-function . select-window)))
          (buffer-name "*global-chat*")
          (prompt (format "@%s %s%s"
@@ -128,8 +127,7 @@ already contains content, the prompt is appended at the end."
                                             (propertize cursor-context
                                                         'face 'font-lock-comment-face)
                                             preset) nil nil t))
-              (gptel-display-buffer-action '(nil
-                                             (display-buffer-reuse-mode-window display-buffer-at-bottom)
+              (gptel-display-buffer-action '(display-buffer-reuse-window
                                              (body-function . select-window)))
               (buffer-name (format "*%s-chat %s*" name root-dir))
               (prompt (format "@%s %s%s"
