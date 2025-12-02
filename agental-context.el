@@ -24,6 +24,12 @@
 
 ;;; Code:
 
+(require 'project)
+(require 'json)
+
+(require 'gptel)
+(require 'gptel-context)
+
 ;;; cursor
 (require 'which-func)
 
@@ -160,11 +166,11 @@ END is the ending position."
 CONTENT is need add content.
 
 CALLBACK and FSM are as described in the
-'gptel-prompt-transform-functions' documentation.
+`gptel-prompt-transform-functions' documentation.
 
 Adds the CONTENT to the prompt,
 in the same place as the default gptel context as specified by
-'gptel-use-context'."
+`gptel-use-context'."
   (when-let* (
               ;; plist containing information about the upcoming request.
               (info (gptel-fsm-info fsm))
