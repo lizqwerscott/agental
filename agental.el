@@ -52,7 +52,8 @@ more options instead.
 
 This command is asynchronous, you can continue to use Emacs while
 waiting for the response."
-  (let ((fsm (gptel-make-fsm :handlers gptel-send--handlers)))
+  (let ((fsm (gptel-make-fsm :handlers gptel-send--handlers))
+        (gptel-use-context 'user))
     (gptel-request nil
       :stream gptel-stream
       :transforms (append gptel-prompt-transform-functions

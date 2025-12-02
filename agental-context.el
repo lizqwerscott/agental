@@ -27,16 +27,24 @@
 ;;; cursor
 (require 'which-func)
 
-(defun agental-context--get-surrounding-chars-pos-with-cursor (&optional n-chars)
+(defcustom agental-context-context-window-size 2000
+  "Maximum number of characters to capture around point as the context window.
+This value determines how much surrounding text the system will read when
+extracting contextual information."
+  :type 'number
+  :group 'agental)
+
+(defun agental-context--cursor-context-range (n-chars)
   "Get content with BUFFER cursor.
 N-CHARS is max size."
-  (let* ((n (or n-chars 500))
-         (pt (point))
-         (buf-min (point-min))
-         (buf-max (point-max))
-         (start-pos (max buf-min (- pt n)))
-         (end-pos   (min buf-max (+ pt n))))
-    (cons start-pos end-pos)))
+  (when (> n-chars 0)
+    (let* ((n n-chars)
+           (pt (point))
+           (buf-min (point-min))
+           (buf-max (point-max))
+           (start-pos (max buf-min (- pt n)))
+           (end-pos   (min buf-max (+ pt n))))
+      (cons start-pos end-pos))))
 
 (defun agental-context--symbol ()
   "Get cursor thing."
@@ -84,7 +92,7 @@ If a region is active, return a list containing the current buffer and a
 :bounds property with the region boundaries.  Otherwise, return a list
 containing the current buffer and a :bounds property with the boundaries
 of text surrounding the cursor, as determined by
-`agental-context--get-surrounding-chars-pos-with-cursor'.
+`agental-context--cursor-context-range'.
 
 The returned list has the form (BUFFER :bounds ((START . END))), where
 BUFFER is the current buffer object, START is the beginning position, and
@@ -92,48 +100,58 @@ END is the ending position."
   (when-let* ((bounds (if (use-region-p)
                           (cons (region-beginning)
                                 (region-end))
-                        (agental-context--get-surrounding-chars-pos-with-cursor))))
+                        (agental-context--cursor-context-range agental-context-context-window-size))))
     (list (current-buffer) :bounds (list bounds))))
 
+(defun agental-context-project-content ()
+  "Get current project metadata."
+  (when-let* ((project (project-current))
+              (root-dir (project-root project))
+              (name (project-name project)))
+    (cons name root-dir)))
+
 (defun agental-context-workspace-content ()
-  "Return now cursor content."
-  (let* ((thing (agental-context--symbol))
-         (function (agental-context--function))
-         (name (buffer-name (current-buffer)))
-         (path (buffer-file-name (current-buffer)))
+  "Return a compact workspace context string (JSON metadata + code snippet)."
+  (let* ((project-metadata (agental-context-project-content))
+
+         (buf (current-buffer))
+         (name (buffer-name buf))
+         (path (buffer-file-name buf))
+         (rel-path (when path
+                     (file-relative-name path
+                                         (or (cdr project-metadata)
+                                             default-directory))))
+         (lang major-mode)
+         (line (line-number-at-pos))
+         (thing (agental-context--symbol))
+         (function-or-heading (agental-context--function))
+
          (cursor-buffer-context (agental-context-buffer-content))
          (buffer (car cursor-buffer-context))
          (bounds (car (plist-get (cdr cursor-buffer-context) :bounds)))
          (buffer-content (with-current-buffer buffer
-                           (buffer-substring-no-properties (car bounds) (cdr bounds)))))
+                           (buffer-substring-no-properties (car bounds) (cdr bounds))))
+
+         (meta (json-encode `(("project" . ,(or (car project-metadata) "unknown"))
+                              ("file" . ,(or rel-path name))
+                              ("abs_path" . ,(or path ""))
+                              ("lang" . ,lang)
+                              ("cursor_line" . ,line)
+                              ("function_or_heading" . ,(or function-or-heading ""))
+                              ("symbol" . ,(or thing ""))))))
     (with-temp-buffer
-      (insert "\n")
+      (insert (format "[METADATA] %s\n" meta))
       (insert "=======================================================\n")
       (insert "WORKSPACE CONTEXT:\n")
-      (insert "=======================================================\n")
-      (insert "\n")
-
-      (insert (format "Now User Edit buffer name is %s\n" name))
-
-      (when path
-        (insert (format "Now User edit file path is %s\n" (file-truename path))))
-
-      (when thing
-        (insert (format "User Cursor point thing is: %s\n" thing)))
-
-      (insert (format "User Cursor function or Heading: %s\n" function))
-
-      (insert "\n")
+      (insert (format "Buffer: %s\n" name))
+      (when path (insert (format "Abs path: %s\n" (file-truename path))))
+      (insert (format "Cursor line: %s\n" line))
+      (insert (format "Function or Heading: %s\n\n" (or function-or-heading "")))
       (when (not (string= "" buffer-content))
-        (insert "User Cursor arround string:\n")
-        (insert buffer-content))
-
-      (insert "\n")
+        (insert (format "Cursor surrounding snippet(±%d chars):\n" (/ agental-context-context-window-size 2)))
+        (insert buffer-content)
+        (insert "\n"))
       (insert "=======================================================\n")
-      (insert "END WORKSPACE CONTEXT:\n")
-      (insert "=======================================================\n")
-      (insert "\n")
-
       (buffer-string))))
 
 (defun agental-context--transform-add-context (content callback fsm)
