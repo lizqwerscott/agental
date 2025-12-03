@@ -36,10 +36,33 @@
   "Agental."
   :group 'agental)
 
-(defun agental--send (workspace-context)
-  "Submit this prompt to the current LLM backend.
+(defvar-local agental--context nil
+  "Agental context.")
 
-WORKSPACE-CONTEXT is now workspace content.
+;;; mode
+
+(defvar agental-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "C-c RET") #'agental--send)
+    (define-key map (kbd "C-c <return>") #'agental--send)
+    map)
+  "Keymap for `agental-mode'.")
+
+;;;###autoload
+(define-minor-mode agental-mode
+  "Minor mode for `agental' interacting with LLMs."
+  :lighter " Agental"
+  :keymap agental-mode-map
+  (if agental-mode
+      (progn
+        (if agental--context
+            (message "With %s" agental--context)
+          (message "No context."))
+        (message "agental-mode enabled"))
+    (message "agental-mode disabled")))
+
+(defun agental--send ()
+  "Submit this prompt to the current LLM backend.
 
 By default, the contents of the buffer up to the cursor position
 are sent.  If the region is active, its contents are sent
@@ -52,14 +75,19 @@ more options instead.
 
 This command is asynchronous, you can continue to use Emacs while
 waiting for the response."
+  (interactive)
   (let ((fsm (gptel-make-fsm :handlers gptel-send--handlers))
-        (gptel-use-context 'user))
+        (gptel-use-context 'user)
+        (context agental--context))
     (gptel-request nil
       :stream gptel-stream
       :transforms (append gptel-prompt-transform-functions
-                          (list
-                           (lambda (callback fsm)
-                             (agental-context--transform-add-context workspace-context callback fsm))))
+                          (if context
+                              (list
+                               (lambda (callback fsm)
+                                 (agental-context--transform-add-context context callback fsm)))
+                            (message "No context.")
+                            nil))
       :fsm fsm)
     (message "Querying %s..."
              (thread-first (gptel-fsm-info fsm)
@@ -69,12 +97,15 @@ waiting for the response."
   (gptel--update-status " Waiting..." 'warning))
 
 
-(defun agental--create-buffer (buffer-name prompt context)
+(defun agental--create-buffer (buffer-name prompt context &optional clean-workspacep)
   "Create or switch to a GPT session buffer and initialize it.
 
 BUFFER-NAME is the name of the target buffer.
 PROMPT is the prompt text to insert during initialization.
-CONTEXT is the context.
+CONTEXT is the context object to associate with this session.
+Optional argument CLEAN-WORKSPACEP, if non-nil, clears the workspace metadata
+from CONTEXT after initialization.
+
 
 This function performs the following operations:
 1. Create or switch to the buffer with the given name
@@ -105,7 +136,11 @@ already contains content, the prompt is appended at the end."
       (insert prompt))
     (display-buffer (current-buffer) gptel-display-buffer-action)
     (unless gptel-mode (gptel-mode 1))
-    (agental--send context)))
+    (unless agental-mode (agental-mode 1))
+    (setq-local agental--context context)
+    (agental--send)
+    (when (and clean-workspacep (agental-context-metadata-workspace agental--context))
+      (setf (agental-context-metadata-workspace agental--context) nil))))
 
 ;;;###autoload
 (defun agental-global-chat ()
@@ -134,7 +169,7 @@ already contains content, the prompt is appended at the end."
          (prompt (format "@%s %s"
                          preset
                          message))
-         (workspace-context (agental-context-workspace-content)))
+         (workspace-context (agental-context-make)))
     (agental--create-buffer buffer-name prompt workspace-context)))
 
 ;;;###autoload
@@ -167,8 +202,8 @@ already contains content, the prompt is appended at the end."
                               preset
                               message
                               (concat " " cursor-context)))
-              (workspace-context (agental-context-workspace-content)))
-    (agental--create-buffer buffer-name prompt workspace-context)))
+              (workspace-context (agental-context-make)))
+    (agental--create-buffer buffer-name prompt workspace-context t)))
 
 (provide 'agental)
 ;;; agental.el ends here

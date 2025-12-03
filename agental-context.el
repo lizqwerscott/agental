@@ -23,12 +23,18 @@
 ;;
 
 ;;; Code:
+(require 'cl-lib)
 
 (require 'project)
 (require 'json)
 
 (require 'gptel)
 (require 'gptel-context)
+
+(cl-defstruct (agental-context-metadata (:constructor agental-context--make))
+  ""
+  (project-metadata)
+  (workspace))
 
 ;;; cursor
 (require 'which-func)
@@ -109,6 +115,7 @@ END is the ending position."
                         (agental-context--cursor-context-range agental-context-context-window-size))))
     (list (current-buffer) :bounds (list bounds))))
 
+;;; project
 (defun agental-context-project-content ()
   "Get current project metadata."
   (when-let* ((project (project-current))
@@ -116,14 +123,15 @@ END is the ending position."
               (name (project-name project)))
     (cons name root-dir)))
 
-(defun agental-context-workspace-content ()
-  "Return a compact workspace context string (JSON metadata + code snippet)."
-  (let* ((project-metadata (agental-context-project-content))
+;;; context
+(defun agental-context-workspace-make (project-metadata)
+  "Make workspace.
 
-         (buf (current-buffer))
+PROJECT-METADATA is the metadata for project."
+  (let* ((buf (current-buffer))
          (name (buffer-name buf))
          (path (buffer-file-name buf))
-         (rel-path (when path
+         (rel-path (when (and path project-metadata)
                      (file-relative-name path
                                          (or (cdr project-metadata)
                                              default-directory))))
@@ -136,34 +144,64 @@ END is the ending position."
          (buffer (car cursor-buffer-context))
          (bounds (car (plist-get (cdr cursor-buffer-context) :bounds)))
          (buffer-content (with-current-buffer buffer
-                           (buffer-substring-no-properties (car bounds) (cdr bounds))))
+                           (buffer-substring-no-properties (car bounds) (cdr bounds)))))
+    (list
+     :name name
+     :file (or rel-path name)
+     :rel-path rel-path
+     :abs-path (or path "")
+     :lang lang
+     :cursor-line line
+     :outline (or function-or-heading "")
+     :symbol (or thing "")
+     :buffer-content buffer-content)))
 
-         (meta (json-encode `(("project" . ,(or (car project-metadata) "unknown"))
-                              ("file" . ,(or rel-path name))
-                              ("abs_path" . ,(or path ""))
-                              ("lang" . ,lang)
-                              ("cursor_line" . ,line)
-                              ("function_or_heading" . ,(or function-or-heading ""))
-                              ("symbol" . ,(or thing ""))))))
+(defun agental-context-make ()
+  "Make context."
+  (let* ((project-metadata (agental-context-project-content))
+         (workspace (agental-context-workspace-make project-metadata)))
+    (agental-context--make :project-metadata project-metadata
+                           :workspace workspace)))
+
+(defun agental-context-workspace-generate (context)
+  "Return a compact workspace context string (JSON metadata + code snippet).
+
+CONTEXT is `w/agental-context-metadata'."
+  (let* ((project-metadata (agental-context-metadata-project-metadata context))
+         (workspace (agental-context-metadata-workspace context))
+         (project-name (or (car project-metadata) "unknown"))
+         (meta (json-encode (append workspace
+                                    (list :project project-name)))))
     (with-temp-buffer
       (insert (format "[METADATA] %s\n" meta))
       (insert "=======================================================\n")
-      (insert "WORKSPACE CONTEXT:\n")
-      (insert (format "Buffer: %s\n" name))
-      (when path (insert (format "Abs path: %s\n" (file-truename path))))
-      (insert (format "Cursor line: %s\n" line))
-      (insert (format "Function or Heading: %s\n\n" (or function-or-heading "")))
-      (when (not (string= "" buffer-content))
-        (insert (format "Cursor surrounding snippet(±%d chars):\n" (/ agental-context-context-window-size 2)))
-        (insert buffer-content)
-        (insert "\n"))
+      (insert "PROJECT CONTEXT:\n")
+      (insert (format "Project name: %s\n" (car project-metadata)))
+      (insert (format "Project path: %s\n" (cdr project-metadata)))
+      (when workspace
+        (insert "=======================================================\n")
+        (let* ((name (plist-get workspace :name))
+               (abs-path (plist-get workspace :abs-path))
+               (cursor-line (plist-get workspace :cursor-line))
+               (outline (plist-get workspace :outline))
+               (buffer-content (plist-get workspace :buffer-content)))
+          (insert "WORKSPACE CONTEXT:\n")
+          (insert (format "Buffer: %s\n" name))
+          (when abs-path (insert (format "Abs path: %s\n" abs-path)))
+          (insert (format "Cursor line: %s\n" cursor-line))
+          (insert (format "Function or Heading: %s\n\n" outline))
+          (when buffer-content
+            (insert (format "Cursor surrounding snippet(±%d chars):\n" (/ agental-context-context-window-size 2)))
+            (insert buffer-content)
+            (insert "\n"))))
+
       (insert "=======================================================\n")
       (buffer-string))))
 
-(defun agental-context--transform-add-context (content callback fsm)
+(defun agental-context--transform-add-context (context callback fsm)
   "A gptel prompt transformer to add context from the current workspace.
 
-CONTENT is need add content.
+CONTEXT is need add context.
 
 CALLBACK and FSM are as described in the
 `gptel-prompt-transform-functions' documentation.
@@ -177,7 +215,7 @@ in the same place as the default gptel context as specified by
               ;; Buffer where the request is being sent.
               (buffer (plist-get info :buffer))
               (_ (buffer-live-p buffer))
-              (workspace-string content))
+              (workspace-string (agental-context-workspace-generate context)))
     (gptel-context--wrap-in-buffer workspace-string))
   (funcall callback))
 
