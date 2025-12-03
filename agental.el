@@ -198,10 +198,9 @@ already contains content, the prompt is appended at the end."
               (gptel-display-buffer-action '(display-buffer-reuse-window
                                              (body-function . select-window)))
               (buffer-name (format "*%s-chat %s*" name root-dir))
-              (prompt (format "@%s %s%s"
+              (prompt (format "@%s %s"
                               preset
-                              message
-                              (concat " " cursor-context)))
+                              message))
               (workspace-context (agental-context-make)))
     (agental--create-buffer buffer-name prompt workspace-context t)))
 
