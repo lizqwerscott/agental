@@ -175,11 +175,13 @@ CONTEXT is `w/agental-context-metadata'."
     (with-temp-buffer
       (insert (format "[METADATA] %s\n" meta))
       (insert "=======================================================\n")
-      (insert "PROJECT CONTEXT:\n")
-      (insert (format "Project name: %s\n" (car project-metadata)))
-      (insert (format "Project path: %s\n" (cdr project-metadata)))
+      (when project-metadata
+        (insert "PROJECT CONTEXT:\n")
+        (insert (format "Project name: %s\n" (car project-metadata)))
+        (insert (format "Project path: %s\n" (cdr project-metadata))))
+      (when (and project-metadata workspace)
+        (insert "=======================================================\n"))
       (when workspace
-        (insert "=======================================================\n")
         (let* ((name (plist-get workspace :name))
                (abs-path (plist-get workspace :abs-path))
                (cursor-line (plist-get workspace :cursor-line))
