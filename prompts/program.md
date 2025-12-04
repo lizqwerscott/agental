@@ -3,6 +3,7 @@ name: program-agent
 description: A specialized agent for editing and modifying code
 tools:
   - read_file_in_workspace
+  - search_in_workspace
   - edit_file_in_workspace
   - find_files
   - list_directory
@@ -34,9 +35,10 @@ When working on tasks, follow these guidelines for tool selection:
 
 **Tool Selection Hierarchy:**
 - Need to modify, insert, delete, or rewrite code → Use `edit_file_in_workspace`
+- Search for patterns across the workspace → `search_in_workspace`
 - Need to locate files by name or pattern → Use `find_files`
 - Need to inspect the project's directory structure → Use `list_directory`
-- Need to inspect file contents → use read_file_in_workspace
+- Need to inspect file contents → use `read_file_in_workspace`
 
 <tool name="read_file_in_workspace">
 **When to use**
@@ -46,8 +48,22 @@ When working on tasks, follow these guidelines for tool selection:
 - The request is about modifying files (use edit_file_in_workspace).
 - The content of the existing files is sufficient to complete the task.
 **How to use**
--Read only the requested range when provided.
--Respect truncation and pagination parameters.
+- Read only the requested range when provided.
+- Respect truncation and pagination parameters.
+</tool>
+
+<tool name="search_in_workspace">
+**When to use**
+- The user wants to search for a text or regex pattern.
+- You need to locate definitions, usages, references, or symbols across the codebase.
+- Confirming where a symbol appears before editing.
+**When NOT to use**
+- User already gave a precise file path and wants direct edits.
+- Searching by filename (use find_files).
+**How to use**
+- Supply pattern explicitly.
+- Optionally specify path, file filters, context lines, and case sensitivity.
+- Use results to decide whether read_file or edit_file is needed next.
 </tool>
 
 <tool name="edit_file_in_workspace">

@@ -501,6 +501,138 @@ found in the workspace."
       "line number and a tab character)")))
  :category "agental")
 
+;;; grep tool
+(defun agental-tools-ripgrep-search (pattern path file-regexp case-insensitive lines-after lines-before)
+  "Use ripgrep search in PATH with PATTERN.
+
+PATTERN is the regular expression to search for.
+PATH is the directory or file to search.
+FILE-REGEXP is a regular expression to filter files.
+CASE-INSENSITIVE, if non-nil, performs a case-insensitive search.
+LINES-AFTER specifies number of lines to show after each match.
+LINES-BEFORE specifies number of lines to show before each match.
+
+Returns the ripgrep command as a string."
+  (let ((args))
+    ;; Add case-insensitive flag
+    (when case-insensitive
+      (push "-i" args))
+    ;; Add context lines
+    (when lines-before
+      (push (format "--before-context=%d" lines-before) args))
+    (when lines-after
+      (push (format "--after-context=%d" lines-after) args))
+    ;; Add file type filter
+    (when file-regexp
+      (push (format "--type-add=%s" file-regexp) args)
+      (push "--type=custom" args))
+    ;; Add pattern
+    (push pattern args)
+    ;; Add search path
+    (when path
+      (push path args))
+    ;; Reverse to get correct order and join
+    (string-join (append (list "rg" "--color=never" "--line-number")
+                         (reverse args))
+                 " ")))
+
+
+(defun agental-tool-search-tool (pattern &optional path file-regexp case-insensitive lines-after lines-before)
+  "Search for PATTERN within the workspace using grep-like functionality.
+
+PATTERN is the regular expression to search for (required).
+
+PATH is the directory or file to search, relative to workspace root.
+Defaults to workspace root if not provided.
+
+FILE-REGEXP is a regular expression to filter files by path relative to
+search path.
+
+CASE-INSENSITIVE, if non-nil, performs a case-insensitive search (default: nil).
+
+LINES-AFTER specifies number of lines to show after each match.
+
+LINES-BEFORE specifies number of lines to show before each
+match.
+
+Returns formatted search results as a string. Considers workspace
+context including any pending changes, creations, or deletions."
+  (let* ((project-metadata (and agental--context
+                                (agental-context-metadata-project-metadata agental--context)))
+         (project-dir (cdr project-metadata))
+         (search-path (if path
+                          (if (file-name-absolute-p path)
+                              (file-truename path)
+                            (expand-file-name path project-dir))
+                        project-dir)))
+    (if (and search-path (file-exists-p search-path))
+        (condition-case err
+            (let* ((rg-command (agental-tools-ripgrep-search pattern
+                                                             search-path
+                                                             file-regexp
+                                                             case-insensitive
+                                                             lines-after
+                                                             lines-before))
+                   (output (with-temp-buffer
+                             (when (zerop (call-process-shell-command rg-command nil t nil))
+                               (let ((total-lines (count-lines (point-min) (point-max))))
+                                 (concat (format "Match %d lines\n" total-lines)
+                                         (save-excursion
+                                           (goto-char (point-min))
+                                           (let ((end-pos (save-excursion
+                                                            (forward-line 99)
+                                                            (point))))
+                                             (buffer-substring-no-properties (point-min) end-pos)))))))))
+              (if output
+                  output
+                "No matches found."))
+          (error
+           (error-message-string err)))
+      (format "Path does not exist: %s" search-path))))
+
+(gptel-make-tool
+ :name "search_in_workspace"
+ :function #'agental-tool-search-tool
+ :description
+ (concat
+  "Search for patterns within the workspace using ripgrep\n")
+ :confirm nil
+ :include nil
+ :args
+ `((:name
+    "pattern"
+    :type string
+    :description "Regular expression pattern to search for (required)")
+   (:name
+    "path"
+    :type string
+    :optional t
+    :description "Directory or file to search, relative to workspace root (defaults to workspace root)")
+   (:name
+    "file_regexp"
+    :type string
+    :optional t
+    :description
+    ,(concat
+      "Filter files by regular expression matched against file path relative to search path. "
+      "Examples: '\\.py$' for Python files, 'src/.*\\.js$' for JS files in src/, "
+      "'test.*\\.py$' for test files"))
+   (:name
+    "case_insensitive"
+    :type boolean
+    :optional t
+    :description "If true, perform case-insensitive search (default: false)")
+   (:name
+    "lines_after"
+    :type number
+    :optional t
+    :description "Number of lines to show after each match.")
+   (:name
+    "lines_before"
+    :type number
+    :optional t
+    :description "Number of lines to show before each match.")))
+
 ;;; edit tools
 (defun agental-tool--generate-patch-diff (path orig-content new-content)
   "Generate a unified diff patch comparing ORIG-CONTENT and NEW-CONTENT for PATH.
