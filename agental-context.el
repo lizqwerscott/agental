@@ -178,7 +178,7 @@ CONTEXT is `w/agental-context-metadata'."
       (when project-metadata
         (insert "PROJECT CONTEXT:\n")
         (insert (format "Project name: %s\n" (car project-metadata)))
-        (insert (format "Project path: %s\n" (cdr project-metadata))))
+        (insert (format "Project root path: %s\n" (cdr project-metadata))))
       (when (and project-metadata workspace)
         (insert "=======================================================\n"))
       (when workspace

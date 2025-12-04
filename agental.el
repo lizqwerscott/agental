@@ -31,6 +31,7 @@
 (require 'gptel)
 
 (require 'agental-context)
+(require 'agental-prompts)
 
 (defgroup agental nil
   "Agental."
@@ -203,6 +204,19 @@ already contains content, the prompt is appended at the end."
                               message))
               (workspace-context (agental-context-make)))
     (agental--create-buffer buffer-name prompt workspace-context t)))
+
+;;;###autoload
+(defun agental-install ()
+  "Install agental preset and tools."
+  (interactive)
+  (agental-prompts-update)
+  (let ((agent (alist-get 'program-agent agental-prompts-templates)))
+    (gptel-make-preset 'program
+      :description (plist-get agent :description)
+      :pre (lambda () (require 'agental-tool))
+      :system (plist-get agent :system)
+      :tools (plist-get agent :tools)
+      :use-tools t)))
 
 (provide 'agental)
 ;;; agental.el ends here
