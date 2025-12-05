@@ -40,6 +40,12 @@
 (defvar-local agental--context nil
   "Agental context.")
 
+(defvar agental-mainagents nil
+  "Main agents.")
+
+(defvar agental-subagents nil
+  "Sub agents.")
+
 ;;; mode
 
 (defvar agental-mode-map
@@ -205,18 +211,40 @@ already contains content, the prompt is appended at the end."
               (workspace-context (agental-context-make)))
     (agental--create-buffer buffer-name prompt workspace-context t)))
 
+(defun agental-make-preset (agent)
+  "Make preset for AGENT."
+  (pcase-let* ((`(,name . ,arg) agent))
+    (apply #'gptel-make-preset
+           `(,name
+             ,@(apply #'append
+                      (mapcar (lambda (key) (list key (plist-get arg key)))
+                              (list :description :system :tools)))
+             :pre ,(lambda () (require 'agent-tool))
+             :use-tools t))))
+
 ;;;###autoload
 (defun agental-install ()
   "Install agental preset and tools."
   (interactive)
   (agental-prompts-update)
-  (let ((agent (alist-get 'program-agent agental-prompts-templates)))
-    (gptel-make-preset 'program
-      :description (plist-get agent :description)
-      :pre (lambda () (require 'agental-tool))
-      :system (plist-get agent :system)
-      :tools (plist-get agent :tools)
-      :use-tools t)))
+
+  (setq agental-mainagents nil)
+  (setq agental-subagents nil)
+  (dolist (prompt agental-prompts-templates)
+    (pcase-let* ((`(_ . ,data) prompt))
+      (when-let* ((type (plist-get data :type))
+                  (type (intern type)))
+        (pcase type
+          ('main
+           (push prompt agental-mainagents))
+          ('sub
+           (push prompt agental-subagents))))))
+
+  (dolist (agent agental-mainagents)
+    (agental-make-preset agent))
+
+  (dolist (agent agental-subagents)
+    (agental-make-preset agent)))
 
 (provide 'agental)
 ;;; agental.el ends here

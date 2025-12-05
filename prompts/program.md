@@ -1,6 +1,7 @@
 ---
 name: program-agent
 description: A specialized agent for editing and modifying code
+type: main
 tools:
   - read_file_in_workspace
   - search_in_workspace
