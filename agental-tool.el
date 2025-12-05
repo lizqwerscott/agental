@@ -894,5 +894,164 @@ operation fails."
      :required ["old_text" "new_text"])))
  :category "agental")
 
+;;; Sub Agent
+
+(defconst agental-tool--hrule
+  (propertize "\n" 'face '(:inherit shadow :underline t :extend t)))
+
+(defun agental-tool--task-overlay (where &optional agent-type description)
+  "Create overlay for agent task at WHERE with AGENT-TYPE and DESCRIPTION."
+  (let* ((bounds                  ;where to place the overlay, handle edge cases
+          (save-excursion
+            (goto-char where)
+            (when (bobp) (insert "\n"))
+            (if (and (bolp) (eolp))
+                (cons (1- (point)) (point))
+              (cons (line-beginning-position) (line-end-position)))))
+         (ov (make-overlay (car bounds) (cdr bounds) nil t))
+         (msg (concat
+               (unless (eq (char-after (car bounds)) 10) "\n")
+               "\n" agental-tool--hrule
+               (propertize (concat (capitalize agent-type) " Task: ")
+                           'face 'font-lock-escape-face)
+               (propertize description 'face 'font-lock-doc-face) "\n")))
+    (prog1 ov
+      (overlay-put ov 'agental-tool t)
+      (overlay-put ov 'count 0)
+      (overlay-put ov 'msg msg)
+      (overlay-put ov 'line-prefix "")
+      (overlay-put
+       ov 'after-string
+       (concat msg (propertize "Waiting..." 'face 'warning) "\n"
+               agental-tool--hrule)))))
+
+(defun agental-tool--indicate-wait (fsm)
+  "Display waiting indicator for agent task FSM."
+  (when-let* ((info (gptel-fsm-info fsm))
+              (info-ov (plist-get info :context))
+              (count (overlay-get info-ov 'count)))
+    (run-at-time
+     1.5 nil
+     (lambda (ov count)
+       (when (and (overlay-buffer ov)
+                  (eql (overlay-get ov 'count) count))
+         (let* ((task-msg (overlay-get ov 'msg))
+                (new-info-msg
+                 (concat task-msg
+                         (concat
+                          (propertize "Waiting... " 'face 'warning) "\n"
+                          (propertize "\n" 'face
+                                      '(:inherit shadow :underline t :extend t))))))
+           (overlay-put ov 'after-string new-info-msg))))
+     info-ov count)))
+
+(defun agental-tool--indicate-tool-call (fsm)
+  "Display tool call indicator for agent task FSM."
+  (when-let* ((info (gptel-fsm-info fsm))
+              (tool-use (plist-get info :tool-use))
+              (ov (plist-get info :context)))
+    ;; Update overlay with tool calls
+    (when (overlay-buffer ov)
+      (let* ((task-msg (overlay-get ov 'msg))
+             (info-count (overlay-get ov 'count))
+             (new-info-msg))
+        (setq new-info-msg
+              (concat task-msg
+                      (concat
+                       (propertize "Calling Tools... " 'face 'mode-line-emphasis)
+                       (if (= info-count 0) "\n" (format "(+%d)\n" info-count))
+                       (mapconcat (lambda (call)
+                                    (gptel--format-tool-call
+                                     (plist-get call :name)
+                                     (map-values (plist-get call :args))))
+                                  tool-use)
+                       "\n" agental-tool--hrule)))
+        (overlay-put ov 'count (+ info-count (length tool-use)))
+        (overlay-put ov 'after-string new-info-msg)))))
+
+(defvar agental-tool-request--handlers
+  `((WAIT ,#'agental-tool--indicate-wait
+          ,#'gptel--handle-wait)
+    (TOOL ,#'agental-tool--indicate-tool-call
+          ,#'gptel--handle-tool-use))
+  "See `gptel-request--handlers'.")
+
+(defun agental-tool-subagent-tool (main-cb agent-type description prompt)
+  "Call a gptel agent to do specific compound tasks.
+
+MAIN-CB is the main callback to return a value to the main loop.
+AGENT-TYPE is the name of the agent.
+DESCRIPTION is a short description of the task.
+PROMPT is the detailed prompt instructing the agent on what is required."
+  (gptel-with-preset
+      (nconc (list :include-reasoning nil
+                   :use-tools t
+                   :use-context nil)
+             (alist-get agent-type agental-subagents))
+    (let* ((info (gptel-fsm-info gptel--fsm-last))
+           (where (or (plist-get info :tracking-marker)
+                      (plist-get info :position)))
+           (partial (format "%s result for task: %s\n\n"
+                            (capitalize agent-type) description)))
+      (gptel--update-status " Calling Agent..." 'font-lock-escape-face)
+      (gptel-request prompt
+        :context (agental-tool--task-overlay where agent-type description)
+        :fsm (gptel-make-fsm :handlers agental-tool-request--handlers)
+        :callback
+        (lambda (resp info)
+          (let ((ov (plist-get info :context)))
+            (pcase resp
+              ('nil
+               (delete-overlay ov)
+               (funcall main-cb
+                        (format "Error: Task %s could not finish task \"%s\". \
+
+  Error details: %S"
+                                agent-type description (plist-get info :error))))
+              (`(tool-call . ,calls)
+               (unless (plist-get info :tracking-marker)
+                 (plist-put info :tracking-marker where))
+               (gptel--display-tool-calls calls info))
+              ((pred stringp)
+               (setq partial (concat partial resp))
+               ;; If tool use is pending, the agent isn't done, so we just
+               ;; accumulate output without printing it.  We print at the end.
+               (unless (plist-get info :tool-use)
+                 (delete-overlay ov)
+                 (when-let* ((transformer (plist-get info :transformer)))
+                   (setq partial (funcall transformer partial)))
+                 (funcall main-cb partial)))
+              ('abort
+               (delete-overlay ov)
+               (funcall main-cb
+                        (format "Error: Task \"%s\" was aborted by the user. \
+  %s could not finish."
+                                description agent-type)))))))))
+  )
+
+
+(gptel-make-tool
+ :name "Agent"
+ :description "Launch a specialized subagent to handle complex, multi-step tasks autonomously.  \
+Agents run independently and return results in one message.  \
+Use for open-ended searches, complex research, or when uncertain about finding results in first few tries."
+ :function #'agental-tool-subagent-tool
+ :args `(( :name "subagent_type"
+           :type string
+           :enum ["explore-agent"]
+           :description "The type of specialized subagent to use for this task")
+         ( :name "description"
+           :type string
+           :description "A short (3-5 word) description of the task")
+         ( :name "prompt"
+           :type "string"
+           :description "The detailed task for the agent to perform autonomously.  \
+Should include exactly what information the agent should return."))
+ :category "agental"
+ :async t
+ :confirm t
+ :include t)
+
+
 (provide 'agental-tool)
 ;;; agental-tool.el ends here

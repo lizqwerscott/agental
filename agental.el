@@ -87,15 +87,15 @@ waiting for the response."
         (gptel-use-context 'user)
         (context agental--context))
     (gptel-request nil
-      :stream gptel-stream
-      :transforms (append gptel-prompt-transform-functions
-                          (if context
-                              (list
-                               (lambda (callback fsm)
-                                 (agental-context--transform-add-context context callback fsm)))
-                            (message "No context.")
-                            nil))
-      :fsm fsm)
+                   :stream gptel-stream
+                   :transforms (append gptel-prompt-transform-functions
+                                       (if context
+                                           (list
+                                            (lambda (callback fsm)
+                                              (agental-context--transform-add-context context callback fsm)))
+                                         (message "No context.")
+                                         nil))
+                   :fsm fsm)
     (message "Querying %s..."
              (thread-first (gptel-fsm-info fsm)
                            (plist-get :backend)
@@ -211,15 +211,18 @@ already contains content, the prompt is appended at the end."
               (workspace-context (agental-context-make)))
     (agental--create-buffer buffer-name prompt workspace-context t)))
 
-(defun agental-make-preset (agent)
-  "Make preset for AGENT."
+(defun agental-make-preset (agent &optional params-alist)
+  "Make preset for AGENT.
+
+PARAMS-ALIST is the system params."
   (pcase-let* ((`(,name . ,arg) agent))
     (apply #'gptel-make-preset
            `(,name
              ,@(apply #'append
                       (mapcar (lambda (key) (list key (plist-get arg key)))
-                              (list :description :system :tools)))
-             :pre ,(lambda () (require 'agent-tool))
+                              (list :description :tools)))
+             :pre ,(lambda () (require 'agental-tool))
+             :system ,(agental-prompts--make arg params-alist)
              :use-tools t))))
 
 ;;;###autoload
@@ -241,7 +244,13 @@ already contains content, the prompt is appended at the end."
            (push prompt agental-subagents))))))
 
   (dolist (agent agental-mainagents)
-    (agental-make-preset agent))
+    (agental-make-preset agent
+                         (when (string= (car agent) "plan-agent")
+                           `(("agents" . ,(string-join (mapcar (lambda (item)
+                                                                 (format "%s" (car item)))
+                                                               agental-subagents)
+                                                       ", ")
+                              )))))
 
   (dolist (agent agental-subagents)
     (agental-make-preset agent)))
