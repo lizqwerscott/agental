@@ -154,11 +154,13 @@ Scan each directory in `agental-prompts-path' for text files with
 extensions .txt, .md, or .org.  Read each file as a prompt template
 using `agental-prompts--read' and add it to `agental-prompts-templates'."
   (interactive)
+  (setq agental-prompts-templates nil)
   (dolist (dir agental-prompts-path)
     (when-let* ((files (directory-files (file-truename dir) t "\\(\\.txt\\|\\.md\\|\\.org\\)$")))
       (dolist (file files)
         (when-let* ((template (agental-prompts--read file)))
-          (push template agental-prompts-templates)))))
+          (unless (alist-get (car template) agental-prompts-templates)
+            (push template agental-prompts-templates))))))
   (message "All prompts update."))
 
 (provide 'agental-prompts)
