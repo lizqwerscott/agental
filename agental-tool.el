@@ -987,7 +987,7 @@ PROMPT is the detailed prompt instructing the agent on what is required."
       (nconc (list :include-reasoning nil
                    :use-tools t
                    :use-context nil)
-             (alist-get agent-type agental-subagents))
+             (alist-get (intern agent-type) gptel--known-presets))
     (let* ((info (gptel-fsm-info gptel--fsm-last))
            (where (or (plist-get info :tracking-marker)
                       (plist-get info :position)))
