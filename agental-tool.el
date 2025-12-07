@@ -894,6 +894,175 @@ operation fails."
      :required ["old_text" "new_text"])))
  :category "agental")
 
+;;; Web search
+;; from https://github.com/karthink/gptel-agent
+
+(require 'eww)
+(require 'url-http)
+
+(defvar url-http-end-of-headers)
+
+(defun agental-tool--shr-next-link ()
+  "Jump to the next SHR link in the buffer.  Return jump position."
+  (let ((current-prop (get-char-property (point) 'shr-url))
+        (next-pos (point)))
+    (while (and (not (eobp))
+                (setq next-pos
+                      (or (next-single-property-change (point) 'shr-url)
+                          (point-max)))
+                (let ((next-prop (get-char-property next-pos 'shr-url)))
+                  (or (equal next-prop current-prop)
+                      (equal next-prop nil))))
+      (goto-char next-pos))
+    (goto-char next-pos)))
+
+(defvar agental-tool--web-search-active nil)
+
+(defun agental-tool--web-search-eww (tool-cb query &optional count)
+  "Search the web using eww's default search engine (usually DuckDuckGo).
+
+Call TOOL-CB with the results as a string.  QUERY is the search string.
+COUNT is the number of results to return (default 5)."
+  ;; No more than two active searches at one time
+  (setq agental-tool--web-search-active
+        (cl-delete-if-not
+         (lambda (buf) (and (buffer-live-p buf)
+                            (process-live-p (get-buffer-process buf))))
+         agental-tool--web-search-active))
+  (if (>= (length agental-tool--web-search-active) 2)
+      (progn (message "Web search: waiting for turn")
+             (run-at-time 5 nil #'agental-tool--web-search-eww
+                          tool-cb query count))
+    (push (agental-tool--fetch-with-timeout
+           (concat eww-search-prefix (url-hexify-string query))
+           #'agental-tool--web-search-eww-callback
+           tool-cb (format "Web search for \"%s\"" query))
+          agental-tool--web-search-active)))
+
+(defun agental-tool--web-fix-unreadable ()
+  "Replace invalid characters from point to end in current buffer."
+  (while (and (skip-chars-forward "\0-\x3fff7f")
+              (not (eobp)))
+    (display-warning
+     '(gptel agental-tool-tools)
+     (format "Invalid character in buffer \"%s\"" (buffer-name)))
+    (delete-char 1) (insert "?")))
+
+(defun agental-tool--web-search-eww-callback (cb)
+  "Extract website text and run callback CB with it."
+  (let* ((count 5) (results))
+    (goto-char (point-min))
+    (goto-char url-http-end-of-headers)
+    ;; (agental-tool--web-fix-unreadable)
+    (let* ((dom (libxml-parse-html-region (point) (point-max)))
+           (result-count 0))
+      (eww-score-readability dom)
+      ;; (erase-buffer) (buffer-disable-undo)
+      (with-temp-buffer
+        (shr-insert-document (eww-highest-readability dom))
+        (goto-char (point-min))
+        (while (and (not (eobp)) (< result-count count))
+          (let ((pos (point))
+                (url (get-char-property (point) 'shr-url))
+                (next-pos (agental-tool--shr-next-link)))
+            (when-let* (((stringp url))
+                        (idx (string-search "http" url))
+                        (url-fmt (url-unhex-string (substring url idx))))
+              (cl-incf result-count)
+              (push (concat url-fmt "\n\n"
+                            (string-trim
+                             (buffer-substring-no-properties pos next-pos))
+                            "\n\n----\n")
+                    results))))))
+    (funcall cb (apply #'concat (nreverse results)))))
+
+(gptel-make-tool
+ :name "WebSearch"
+ :function 'agental-tool--web-search-eww
+ :description "Search the web for the first five results to a query.  The query can be an arbitrary string.  Returns the top five results from the search engine as a list of plists.  Each object has the keys `:url` and `:excerpt` for the corresponding search result.
+
+This tool uses the Emacs web browser (eww) with its default search engine (typically DuckDuckGo) to perform searches. No API key is required.
+
+If required, consider using the url as the input to the `Read` tool to get the contents of the url.  Note that this might not work as the `Read` tool does not handle javascript-enabled pages."
+ :args '((:name "query"
+                :type string
+                :description "The natural language search query, can be multiple words.")
+         (:name "count"
+                :type integer
+                :description "Number of results to return (default 5)"
+                :optional t))
+ :include t
+ :async t
+ :category "agental")
+
+;;;; Read URLs
+;; from https://github.com/karthink/gptel-agent
+
+(defun agental-tool--fetch-with-timeout (url url-cb tool-cb failed-msg &rest args)
+  "Fetch URL and call URL-CB in the result buffer.
+
+Call TOOL-CB if there is an error or a timeout.  TOOL-CB and ARGS are
+passed to URL-CB.  FAILED-MSG is a fragment used for messaging.  Handles
+cleanup."
+  (let* ((timeout 30) timer done
+         (inherit-process-coding-system t)
+         (proc-buffer
+          (url-retrieve
+           url (lambda (status)
+                 (setq done t)
+                 (when timer (cancel-timer timer))
+                 (if-let* ((err (plist-get status :error)))
+                     (funcall tool-cb
+                              (format "Error: %s failed with error: %S" failed-msg err))
+                   (apply url-cb tool-cb args))
+                 (kill-buffer (current-buffer)))
+           args 'silent)))
+    (setq timer
+          (run-at-time
+           timeout nil
+           (lambda (buf cb)
+             (unless done
+               (setq done t)
+               (let ((kill-buffer-query-functions)) (kill-buffer buf))
+               (funcall
+                cb (format "Error: %s timed out after %d seconds."
+                           failed-msg timeout))))
+           proc-buffer tool-cb))
+    proc-buffer))
+
+(defun agental-tool--read-url (tool-cb url)
+  "Fetch URL text and call TOOL-CB with it."
+  (agental-tool--fetch-with-timeout
+   url
+   (lambda (cb)
+     (goto-char (point-min)) (forward-paragraph)
+     (condition-case errdata
+         (let ((dom (libxml-parse-html-region (point) (point-max))))
+           (with-temp-buffer
+             (eww-score-readability dom)
+             (shr-insert-document (eww-highest-readability dom))
+             (decode-coding-region (point-min) (point-max) 'utf-8)
+             (funcall
+              cb (buffer-substring-no-properties
+                  (point-min) (point-max)))))
+       (error (funcall cb (format "Error: Request failed with error data:\n%S"
+                                  errdata)))))
+   tool-cb (format "Fetch for \"%s\"" url)))
+
+(gptel-make-tool
+ :function #'agental-tool--read-url
+ :name "WebFetch"
+ :description "Fetch and read the contents of a URL.
+
+- Returns the text of the URL (not HTML) formatted for reading.
+- Request times out after 30 seconds."
+ :args '(( :name "url"
+           :type "string"
+           :description "The URL to read"))
+ :async t
+ :include t
+ :category "agental")
+
 ;;; Sub Agent
 
 (defconst agental-tool--hrule
