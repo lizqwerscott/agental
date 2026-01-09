@@ -211,10 +211,12 @@ already contains content, the prompt is appended at the end."
               (workspace-context (agental-context-make)))
     (agental--create-buffer buffer-name prompt workspace-context t)))
 
-(defun agental-make-preset (agent &optional params-alist)
+(defun agental-make-preset (agent &optional params-alist preset-args)
   "Make preset for AGENT.
 
-PARAMS-ALIST is the system params."
+PARAMS-ALIST is the system params.
+PRESET-ARGS is a plist of additional keyword arguments to pass to
+`gptel-make-preset'."
   (pcase-let* ((`(,name . ,arg) agent))
     (apply #'gptel-make-preset
            `(,name
@@ -223,11 +225,15 @@ PARAMS-ALIST is the system params."
                               (list :description :tools)))
              :pre ,(lambda () (require 'agental-tool))
              :system ,(agental-prompts--make arg params-alist)
-             :use-tools t))))
+             :use-tools t
+             ,@preset-args))))
 
 ;;;###autoload
-(defun agental-install ()
-  "Install agental preset and tools."
+(defun agental-install (&optional preset-args)
+  "Install agental preset and tools.
+
+PRESET-ARGS is a plist of additional keyword arguments to pass to
+`gptel-make-preset'."
   (interactive)
   (agental-prompts-update)
 
@@ -250,7 +256,8 @@ PARAMS-ALIST is the system params."
                                                                  (format "%s" (car item)))
                                                                agental-subagents)
                                                        ", ")
-                              )))))
+                              )))
+                         preset-args))
 
   (dolist (agent agental-subagents)
     (agental-make-preset agent)))
