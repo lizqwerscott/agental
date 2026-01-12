@@ -32,7 +32,7 @@
   :type '(list symbol)
   :group 'agental)
 
-(defcustom agental-tool-edit-tools (list #'agental-tool-edit-file-tool)
+(defcustom agental-tool-edit-tools (list #'agental-tool-edit-file-tool #'agental-tool-write-file-tool)
   ""
   :type '(list symbol)
   :group 'agental)
@@ -893,6 +893,54 @@ operation fails."
        :description "If true, replace all occurrences. If false (default), error if multiple matches exist"))
      :required ["old_text" "new_text"])))
  :category "agental")
+
+;;; write file
+
+(defun agental-tool-write-file-tool (path content)
+  "Create a new file or completely overwrite an existing file with CONTENT.
+
+PATH is the path to the file, relative to the workspace root.
+
+CONTENT is the complete new content for the file.
+
+Use with caution as it will overwrite existing files without warning.
+Handles text content with proper encoding."
+  (condition-case err
+      (let* ((project-metadata (and agental--context
+                                    (agental-context-metadata-project-metadata agental--context)))
+             (project-dir (cdr project-metadata))
+             (full-path (if (and project-dir (not (file-name-absolute-p path)))
+                            (expand-file-name path project-dir)
+                          (file-truename path))))
+        ;; Ensure directory exists
+        (make-directory (file-name-directory full-path) t)
+        ;; Write content to file
+        (with-temp-file full-path
+          (insert content))
+        nil)  ; Return nil on success
+    (error
+     (error-message-string err))))
+
+(gptel-make-tool
+ :name "write_file_in_workspace"
+ :function #'agental-tool-write-file-tool
+ :description
+ (concat
+  "Create new file or completely replace existing file content in your workspace.\n"
+  "If the corresponding file directory does not exist, it will automatically create the non-existent directory.\n"
+  "\n"
+  "WARNING: Overwrites ALL existing content. Use edit_file_in_workspace for partial changes.\n"
+  "\n"
+  "Returns null on success. Fails if the path is invalid or outside the workspace.")
+ :confirm nil
+ :include nil
+ :args '((:name "path" :type string :description "Path to the file, relative to workspace root")
+         (:name
+          "content"
+          :type string
+          :description "Complete new content that will replace the entire file"))
+ :category "agental")
+
 
 ;;; Web search
 ;; from https://github.com/karthink/gptel-agent

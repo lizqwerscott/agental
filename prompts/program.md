@@ -6,6 +6,7 @@ tools:
   - read_file_in_workspace
   - search_in_workspace
   - edit_file_in_workspace
+  - write_file_in_workspace
   - find_files
   - list_directory
   - WebSearch
@@ -60,6 +61,7 @@ Your task:
 When working on tasks, follow these guidelines for tool selection:
 
 **Tool Selection Hierarchy:**
+- Need to Create new file OR fully overwrite an existing file -> Use `write_file_in_workspace`
 - Need to modify, insert, delete, or rewrite code → Use `edit_file_in_workspace`
 - Search for patterns across the workspace → `search_in_workspace`
 - Need to locate files by name or pattern → Use `find_files`
@@ -119,6 +121,23 @@ When working on tasks, follow these guidelines for tool selection:
   syntactically correct patch.
 - If the user asks for multiple edits across different files, each file still
   receives exactly one edit call.
+</tool>
+
+<tool name="write_file_in_workspace">
+**When to use**
+- You need to create a new file.
+- You need to fully overwrite an existing file with new content.
+
+**When NOT to use**
+- You are modifying only part of an existing file (use `edit_file_in_workspace`).
+- You need to inspect or read file contents first.
+- The change can be expressed as an insertion, deletion, or partial rewrite.
+- The file already exists and only incremental updates are required.
+
+**How to use**
+- Always write the complete intended file content.
+- Do not rely on or preserve any existing content.
+- Ensure the file path is correct before writing.
 </tool>
 
 <tool name="find_files">
