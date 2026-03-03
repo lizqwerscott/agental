@@ -37,6 +37,9 @@
   :type '(list symbol)
   :group 'agental)
 
+(defconst agental-tool--hrule
+  (propertize "\n" 'face '(:inherit shadow :underline t :extend t)))
+
 ;;; glob-tool
 
 (require 'seq)
@@ -806,8 +809,158 @@ found or if the edit operation fails."
           (cons content new-content))
       (error "The '%s' file not find" path))))
 
-(defun agental-tool-edit-file-tool (path edits)
+(defcustom agental-tool-diff-preview-lines 10
+  "Number of diff lines to show in the preview overlay."
+  :type 'integer
+  :group 'agental-tool)
+
+(defvar agental-tool--edit-overlay nil)
+
+(defvar-keymap agental-tool--edit-file-keymap
+  "C-c C-a" #'agental-tool-edit-file-apply-diff
+  "C-c C-c" #'agental-tool-edit-file-finish
+  "C-c C-d" #'agental-tool-edit-file-show-diff
+  "C-c C-k" #'agental-tool-edit-file-reject)
+
+(defun agental-tool--edit-file-overlay (where path diff-text new-content callback)
+  "Insert an overlay at WHERE to preview and manage file edits for PATH.
+The overlay displays DIFF-TEXT, a diff representation of the changes, and stores
+the NEW-CONTENT to be applied. The CALLBACK function is called after the user
+finishes the edit session.
+
+The overlay is interactive and provides a keymap with the following commands:
+\\<agental-tool--edit-file-keymap>
+\\[agental-tool-edit-file-apply-diff] applies the diff to the file on disk.
+\\[agental-tool-edit-file-finish] finishes the edit session and calls CALLBACK.
+\\[agental-tool-edit-file-show-diff] displays the full diff in a separate buffer.
+\\[agental-tool-edit-file-reject] rejects the changes and removes the overlay.
+
+The overlay is stored in the variable `agental-tool--edit-overlay'. It can be
+cleared with the command `agental-tool--edit-clear-overlay'."
+  (let* ((bounds
+          (save-excursion
+            (let ((start nil))
+              (goto-char where)
+              (insert "\n")
+              (setq start (point))
+              (insert "\n\n")
+              (cons start (point)))))
+         (ov (make-overlay (car bounds) (cdr bounds) nil t))
+         (msg (concat
+               (unless (eq (char-after (car bounds)) 10) "\n")
+               "\n"
+               agental-tool--hrule
+               (propertize (concat "Edit: " path)
+                           'face 'font-lock-escape-face)
+               "\n")))
+    (setq agental-tool--edit-overlay
+          (prog1 ov
+            (overlay-put ov 'callback callback)
+            (overlay-put ov 'new-content new-content)
+            (overlay-put ov 'msg msg)
+            (overlay-put ov 'path path)
+            (overlay-put ov 'diff-text diff-text)
+            (overlay-put ov 'line-prefix "")
+            (overlay-put ov 'keymap agental-tool--edit-file-keymap)
+            (overlay-put ov 'display
+                         (concat "Apply: C-c C-a  Finish: C-c C-c  "
+                                 "Reject: C-c C-k  Show diff: C-c C-d"))
+            (overlay-put ov 'after-string
+                         (concat msg
+                                 (with-temp-buffer
+                                   (insert diff-text)
+                                   (goto-line (1+ agental-tool-diff-preview-lines))
+                                   (diff-mode)
+                                   (font-lock-ensure (point-min) (point))
+                                   (buffer-substring (point-min) (point)))
+                                 "\n"
+                                 agental-tool--hrule))))))
+
+(defun agental-tool--edit-clear-overlay (ov)
+  "Clear the edit overlay OV.
+Delete the overlay and remove the text it occupies from the buffer."
+  (interactive)
+  (when (overlayp ov)
+    (let ((start (overlay-start ov))
+          (end (overlay-end ov)))
+      (delete-overlay ov)
+      (when (and start end)
+        (save-excursion
+          (goto-char start)
+          (delete-region start end))))))
+
+(defun agental-tool--edit-cleanup-with-callback (ov message)
+  "Clean up overlay OV and call its callback with MESSAGE."
+  (let ((callback (overlay-get ov 'callback)))
+    (agental-tool--edit-clear-overlay ov)
+    (funcall callback message)))
+
+(defun agental-tool-edit-file-apply-diff ()
+  "Apply diff."
+  (interactive)
+  (let ((path (overlay-get agental-tool--edit-overlay 'path))
+        (new-content (overlay-get agental-tool--edit-overlay 'new-content))
+        (callback (overlay-get agental-tool--edit-overlay 'callback)))
+
+    (condition-case err
+        (progn
+          (with-current-buffer (find-file-noselect path)
+            (save-excursion
+              (erase-buffer)
+              (insert new-content))
+            (save-current-buffer))
+
+          (agental-tool--edit-cleanup-with-callback agental-tool--edit-overlay "All Changes applied successfully."))
+      (error
+       (funcall callback
+                (concat "Apply diff error: "
+                        (error-message-string err)
+                        "."))))))
+
+(defun agental-tool-edit-file-finish ()
+  "Finish edit file."
+  (interactive)
+  (agental-tool--edit-cleanup-with-callback agental-tool--edit-overlay "Edit session finished."))
+
+(defun agental-tool-edit-file-reject ()
+  "Reject the changes and remove the edit overlay."
+  (interactive)
+  (agental-tool--edit-cleanup-with-callback agental-tool--edit-overlay "Changes rejected."))
+
+(defun agental-tool-edit-file-show-diff ()
+  "Show diff buffer."
+  (interactive)
+  (let* ((path (overlay-get agental-tool--edit-overlay 'path))
+         (diff-text (overlay-get agental-tool--edit-overlay 'diff-text))
+         (diff-buffer (get-buffer-create (format "*Diff for %s*" path))))
+    (if diff-text
+        (progn
+          (with-current-buffer diff-buffer
+            (let ((was-read-only buffer-read-only))
+              ;; Temporarily disable read-only mode to update the buffer.
+              (when was-read-only
+                (read-only-mode -1))
+              (erase-buffer)
+              (insert diff-text)
+              (when was-read-only
+                (read-only-mode 1)))
+
+            (diff-mode)
+
+            ;; Move to the beginning of the buffer.
+            (goto-char (point-min)))
+
+          (display-buffer diff-buffer
+                          '(display-buffer-reuse-window
+                            (body-function . select-window)))
+
+          "Generate diff success.")
+      "Generate diff buffer error, new content same with orign content")))
+
+(defun agental-tool-edit-file-tool (callback path edits)
   "Edit file in PATH with new content.
+
+CALLBACK is the callback to return a value to the loop.
 
 PATH is the path to the file.
 
@@ -828,35 +981,14 @@ operation fails."
              (full-path (if (and project-dir (not (file-name-absolute-p path)))
                             (expand-file-name path project-dir)
                           (file-truename path))))
-        (pcase-let* ((`(,content . ,new-content) (agental-tool--edit-file full-path edits)))
-          ;; generate diff buffer
-          (let ((diff-buffer (get-buffer-create (format "*Diff for %s*" path)))
-                (diff-text (agental-tool--generate-patch-diff path content new-content)))
-            (if diff-text
-                (progn
-                  (with-current-buffer diff-buffer
-                    (let ((was-read-only buffer-read-only))
-                      ;; Temporarily disable read-only mode to update the buffer.
-                      (when was-read-only
-                        (read-only-mode -1))
-                      (erase-buffer)
-                      (insert diff-text)
-                      (when was-read-only
-                        (read-only-mode 1)))
-
-                    (diff-mode)
-
-                    ;; Move to the beginning of the buffer.
-                    (goto-char (point-min)))
-
-                  (display-buffer diff-buffer
-                                  '(display-buffer-reuse-window
-                                    (body-function . select-window)))
-
-                  "Generate diff success.")
-              "Generate diff buffer error, new content same with orign content"))))
+        (pcase-let* ((`(,content . ,new-content) (agental-tool--edit-file full-path edits))
+                     (diff-text (agental-tool--generate-patch-diff path content new-content))
+                     (info (gptel-fsm-info gptel--fsm-last))
+                     (where (or (plist-get info :tracking-marker)
+                                (plist-get info :position))))
+          (agental-tool--edit-file-overlay where full-path diff-text new-content callback)))
     (error
-     (error-message-string err))))
+     (funcall callback (error-message-string err)))))
 
 (gptel-make-tool
  :name "edit_file_in_workspace"
@@ -892,6 +1024,7 @@ operation fails."
        boolean
        :description "If true, replace all occurrences. If false (default), error if multiple matches exist"))
      :required ["old_text" "new_text"])))
+ :async t
  :category "agental")
 
 ;;; write file
@@ -1112,10 +1245,6 @@ cleanup."
  :category "agental")
 
 ;;; Sub Agent
-
-(defconst agental-tool--hrule
-  (propertize "\n" 'face '(:inherit shadow :underline t :extend t)))
-
 (defun agental-tool--task-overlay (where &optional agent-type description)
   "Create overlay for agent task at WHERE with AGENT-TYPE and DESCRIPTION."
   (let* ((bounds                  ;where to place the overlay, handle edge cases
