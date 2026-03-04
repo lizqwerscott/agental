@@ -838,12 +838,12 @@ The overlay is interactive and provides a keymap with the following commands:
 The overlay is stored in the variable `agental-tool--edit-overlay'. It can be
 cleared with the command `agental-tool--edit-clear-overlay'."
   (let* ((show-diff-text (propertize
-                          (with-temp-buffer
-                            (insert diff-text)
-                            (goto-line (1+ agental-tool-diff-preview-lines))
-                            (diff-mode)
-                            (font-lock-ensure (point-min) (point))
-                            (buffer-substring (point-min) (point)))
+                          (concat "#+begin_src diff\n"
+                                  (with-temp-buffer
+                                    (insert diff-text)
+                                    (goto-line (1+ agental-tool-diff-preview-lines))
+                                    (buffer-substring (point-min) (point)))
+                                  "\n#+end_src\n")
                           'read-only t))
          (bounds
           (save-excursion
@@ -864,11 +864,18 @@ cleared with the command `agental-tool--edit-clear-overlay'."
             (overlay-put ov 'keymap agental-tool--edit-file-keymap)
             (overlay-put ov 'before-string
                          (concat agental-tool--hrule
-                                 "Apply: C-c C-a  Finish: C-c C-c  "
-                                 "Reject: C-c C-k  Show diff: C-c C-d"
+                                 (propertize "Apply: " 'face 'font-lock-string-face)
+                                 (propertize "C-c C-a" 'face 'help-key-binding)
+                                 (propertize "  Finish: " 'face 'font-lock-string-face)
+                                 (propertize "C-c C-c" 'face 'help-key-binding)
+                                 (propertize "  Reject: " 'face 'font-lock-string-face)
+                                 (propertize "C-c C-k" 'face 'help-key-binding)
+                                 (propertize "  Show diff: " 'face 'font-lock-string-face)
+                                 (propertize "C-c C-d" 'face 'help-key-binding)
                                  "\n"
-                                 (propertize (concat "Edit: " path)
-                                             'face 'font-lock-escape-face)
+                                 (propertize (concat "Edit: ")
+                                             'face 'font-lock-keyword-face)
+                                 (propertize path 'face 'font-lock-string-face)
                                  "\n"))
             (overlay-put ov 'after-string agental-tool--hrule)))))
 
