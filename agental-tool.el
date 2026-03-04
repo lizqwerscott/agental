@@ -837,44 +837,40 @@ The overlay is interactive and provides a keymap with the following commands:
 
 The overlay is stored in the variable `agental-tool--edit-overlay'. It can be
 cleared with the command `agental-tool--edit-clear-overlay'."
-  (let* ((bounds
+  (let* ((show-diff-text (propertize
+                          (with-temp-buffer
+                            (insert diff-text)
+                            (goto-line (1+ agental-tool-diff-preview-lines))
+                            (diff-mode)
+                            (font-lock-ensure (point-min) (point))
+                            (buffer-substring (point-min) (point)))
+                          'read-only t))
+         (bounds
           (save-excursion
             (let ((start nil))
               (goto-char where)
               (insert "\n")
               (setq start (point))
-              (insert "\n\n")
+              (insert show-diff-text)
               (cons start (point)))))
-         (ov (make-overlay (car bounds) (cdr bounds) nil t))
-         (msg (concat
-               (unless (eq (char-after (car bounds)) 10) "\n")
-               "\n"
-               agental-tool--hrule
-               (propertize (concat "Edit: " path)
-                           'face 'font-lock-escape-face)
-               "\n")))
+         (ov (make-overlay (car bounds) (cdr bounds) nil t)))
     (setq agental-tool--edit-overlay
           (prog1 ov
             (overlay-put ov 'callback callback)
             (overlay-put ov 'new-content new-content)
-            (overlay-put ov 'msg msg)
             (overlay-put ov 'path path)
             (overlay-put ov 'diff-text diff-text)
             (overlay-put ov 'line-prefix "")
             (overlay-put ov 'keymap agental-tool--edit-file-keymap)
-            (overlay-put ov 'display
-                         (concat "Apply: C-c C-a  Finish: C-c C-c  "
-                                 "Reject: C-c C-k  Show diff: C-c C-d"))
-            (overlay-put ov 'after-string
-                         (concat msg
-                                 (with-temp-buffer
-                                   (insert diff-text)
-                                   (goto-line (1+ agental-tool-diff-preview-lines))
-                                   (diff-mode)
-                                   (font-lock-ensure (point-min) (point))
-                                   (buffer-substring (point-min) (point)))
+            (overlay-put ov 'before-string
+                         (concat agental-tool--hrule
+                                 "Apply: C-c C-a  Finish: C-c C-c  "
+                                 "Reject: C-c C-k  Show diff: C-c C-d"
                                  "\n"
-                                 agental-tool--hrule))))))
+                                 (propertize (concat "Edit: " path)
+                                             'face 'font-lock-escape-face)
+                                 "\n"))
+            (overlay-put ov 'after-string agental-tool--hrule)))))
 
 (defun agental-tool--edit-clear-overlay (ov)
   "Clear the edit overlay OV.
@@ -887,7 +883,8 @@ Delete the overlay and remove the text it occupies from the buffer."
       (when (and start end)
         (save-excursion
           (goto-char start)
-          (delete-region start end))))))
+          (let ((inhibit-read-only t))
+            (delete-region start end)))))))
 
 (defun agental-tool--edit-cleanup-with-callback (ov message)
   "Clean up overlay OV and call its callback with MESSAGE."
