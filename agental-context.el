@@ -124,6 +124,16 @@ END is the ending position."
     (cons name root-dir)))
 
 ;;; context
+(defun agental-context-load-project-rule (project)
+  "Load AGENTAL.md from PROJECT."
+  (when-let* ((project)
+              (root-dir (project-root project))
+              (rule-path (expand-file-name "AGENTAL.md" root-dir)))
+    (when (file-exists-p rule-path)
+      (with-temp-buffer
+        (insert-file-contents rule-path)
+        (buffer-substring-no-properties (point) (point-max))))))
+
 (defun agental-context-workspace-make (project-metadata)
   "Make workspace.
 
@@ -168,6 +178,7 @@ PROJECT-METADATA is the metadata for project."
 
 CONTEXT is `w/agental-context-metadata'."
   (let* ((project-metadata (agental-context-metadata-project-metadata context))
+         (project-rule (agental-context-load-project-rule (project-current nil (cdr project-metadata))))
          (workspace (agental-context-metadata-workspace context))
          (project-name (or (car project-metadata) "unknown"))
          (meta (json-encode (append workspace
@@ -175,6 +186,9 @@ CONTEXT is `w/agental-context-metadata'."
     (with-temp-buffer
       (insert (format "[METADATA] %s\n" meta))
       (insert "=======================================================\n")
+      (when project-rule
+        (insert project-rule)
+        (insert "=======================================================\n"))
       (when project-metadata
         (insert "PROJECT CONTEXT:\n")
         (insert (format "Project name: %s\n" (car project-metadata)))
