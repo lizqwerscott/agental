@@ -40,6 +40,42 @@
 (defconst agental-tool--hrule
   (propertize "\n" 'face '(:inherit shadow :underline t :extend t)))
 
+(defun agental-tool--insert-tool-call (header show-mode res successp)
+  "Insert a formatted tool call result into the GPTel buffer.
+
+HEADER is a string describing the tool call.
+SHOW-MODE is the Org source block language mode for successful results.
+RES is the result string to display.
+SUCCESSP is non-nil if the tool call succeeded.
+Return RES."
+  (let* ((info (gptel-fsm-info gptel--fsm-last))
+         (where (or (plist-get info :tracking-marker)
+                    (plist-get info :position)
+                    (plist-get info :reasoning-marker)))
+         (res-start))
+    (save-excursion
+      (goto-char where)
+      (insert
+       (propertize (concat (unless (and (bolp) (eolp))
+                             "\n\n")
+                           "=execute:= " header)
+                   'gptel 'ignore))
+      (setq res-start (point))
+      (insert
+       (propertize (concat "\n"
+                           (if successp
+                               (concat "#+begin_src " show-mode "\n"
+                                       res
+                                       "\n"
+                                       "#+end_src")
+                             (concat "Error: " res))
+                           "\n\n")
+                   'gptel 'ignore))
+      (goto-char res-start)
+      (forward-line)
+      (ignore-errors (when (looking-at-p "^#\\+begin_src") (org-cycle))))
+    res))
+
 ;;; glob-tool
 
 (require 'seq)
@@ -109,13 +145,27 @@ first). If no files are found, returns nil and displays a message."
                     files dir
                     (or respect-git-ignore t)
                     (or respect-ai-ignore t)))
-         (sorted (agental-tool--glob-sort-files filtered)))
-    (if (null sorted)
-        (format "No files found matching: %s in %s" dir pattern)
-      (format "Found %d files matching '%s' (sorted by modification time):\n%s"
-              (length sorted)
-              pattern
-              (string-join sorted "\n")))))
+         (sorted (agental-tool--glob-sort-files filtered))
+         (successp t)
+         (res))
+    (setq res
+          (if (null sorted)
+              (format "No files found matching: %s in %s" dir pattern)
+            (format "Found %d files matching '%s' (sorted by modification time):\n%s"
+                    (length sorted)
+                    pattern
+                    (string-join sorted "\n"))))
+    (agental-tool--insert-tool-call (format "~find_files~ '%s' in %s"
+                                            pattern
+                                            (if dir
+                                                (format "[[file:%s][%s]]"
+                                                        dir
+                                                        (file-name-nondirectory (directory-file-name dir)))
+                                              "workspace root"))
+                                    "text"
+                                    res
+                                    successp)
+    res))
 
 ;; Register the tool with GPTel
 (gptel-make-tool
@@ -216,25 +266,39 @@ Returns a list of alists describing files, each with keys:
   - isDirectory: non-nil if it is a directory
   - size: file size in bytes
   - modifiedTime: last modification time."
-  (condition-case err
-      (let* ((dir (or dir-path default-directory)))
-        (unless (file-directory-p dir)
-          (error "Path is not a directory: %s" dir))
-        (let ((entries (agental-tool--ls-collect-files
-                        dir ignore
-                        (or respect-git-ignore t)
-                        (or respect-ai-ignore t))))
-          (if (null entries)
-              (format "Directory %s is empty." dir)
-            (format "Listed %d entries in %s (sorted by modification time):\n%s"
-                    (length entries)
-                    dir
-                    (string-join (mapcar (lambda (item)
-                                           (alist-get 'name item))
-                                         entries)
-                                 "\n")))))
-    (error
-     (format "Error listing directory: %s" (error-message-string err)))))
+  (let* ((dir (or dir-path default-directory))
+         (successp t)
+         (res))
+    (setq res
+          (condition-case err
+              (progn
+                (unless (file-directory-p dir)
+                  (error "Path is not a directory: %s" dir))
+                (let ((entries (agental-tool--ls-collect-files
+                                dir ignore
+                                (or respect-git-ignore t)
+                                (or respect-ai-ignore t))))
+                  (if (null entries)
+                      (format "Directory %s is empty." dir)
+                    (format "Listed %d entries in %s (sorted by modification time):\n%s"
+                            (length entries)
+                            dir
+                            (string-join (mapcar (lambda (item)
+                                                   (alist-get 'name item))
+                                                 entries)
+                                         "\n")))))
+            (error
+             (setq successp nil)
+             (error-message-string err))))
+    (agental-tool--insert-tool-call (format "~list_directory~ %s"
+                                            (if (and dir (file-exists-p dir))
+                                                (format "[[file:%s][%s]]"
+                                                        dir
+                                                        (file-name-nondirectory (directory-file-name dir)))
+                                              dir))
+                                    "text"
+                                    res
+                                    successp)))
 
 ;; Register with GPTel
 (gptel-make-tool
@@ -467,40 +531,17 @@ found in the workspace."
       (error
        (setq successp nil)
        (setq res (error-message-string err))))
+    (let* ((file-link (format "[[file:%s][%s]]" full-path (file-name-nondirectory full-path))))
+      (agental-tool--insert-tool-call (format "~read_file~ (%s) %s"
+                                              file-link
+                                              (if (and offset limit)
+                                                  (format "from %s to %s" offset (+ offset limit))
+                                                "all content"))
 
-    (let* ((info (gptel-fsm-info gptel--fsm-last))
-           (where (or (plist-get info :tracking-marker)
-                      (plist-get info :position)
-                      (plist-get info :reasoning-marker)))
-           (file-link (format "[[file:%s][%s]]" full-path (file-name-nondirectory full-path)))
-           (res-start))
-      (save-excursion
-        (goto-char where)
-        (insert
-         (propertize (concat "\n\n"
-                             "=execute:= "
-                             (if (and offset limit)
-                                 (format "~read_file~ (%s) from %s to %s" file-link offset limit)
-                               (format "~read_file~ (%s) all content" file-link)))
-                     'gptel 'ignore))
-        (setq res-start (point))
-        (insert
-         (propertize (concat "\n"
-                             (if successp
-                                 (concat "#+begin_src "
-                                         (with-current-buffer (find-file-noselect full-path)
-                                           (replace-regexp-in-string "-mode$" "" (symbol-name major-mode)))
-                                         "\n"
-                                         res
-                                         "\n"
-                                         "#+end_src")
-                               (concat "Error: " res))
-                             "\n\n")
-                     'gptel 'ignore))
-        (goto-char res-start)
-        (forward-line)
-        (ignore-errors (when (looking-at-p "^#\\+begin_src") (org-cycle))))
-      res)))
+                                      (with-current-buffer (find-file-noselect full-path)
+                                        (replace-regexp-in-string "-mode$" "" (symbol-name major-mode)))
+                                      res
+                                      successp))))
 
 (gptel-make-tool
  :name "read_file_in_workspace"
@@ -604,31 +645,50 @@ context including any pending changes, creations, or deletions."
                           (if (file-name-absolute-p path)
                               (file-truename path)
                             (expand-file-name path project-dir))
-                        project-dir)))
-    (if (and search-path (file-exists-p search-path))
-        (condition-case err
-            (let* ((rg-command (agental-tools-ripgrep-search pattern
-                                                             search-path
-                                                             file-regexp
-                                                             case-insensitive
-                                                             lines-after
-                                                             lines-before))
-                   (output (with-temp-buffer
-                             (when (zerop (call-process-shell-command rg-command nil t nil))
-                               (let ((total-lines (count-lines (point-min) (point-max))))
-                                 (concat (format "Match %d lines\n" total-lines)
-                                         (save-excursion
-                                           (goto-char (point-min))
-                                           (let ((end-pos (save-excursion
-                                                            (forward-line 99)
-                                                            (point))))
-                                             (buffer-substring-no-properties (point-min) end-pos)))))))))
-              (if output
-                  output
-                "No matches found."))
-          (error
-           (error-message-string err)))
-      (format "Path does not exist: %s" search-path))))
+                        project-dir))
+         (successp t)
+         (res))
+    (setq res
+          (if (and search-path (file-exists-p search-path))
+              (condition-case err
+                  (let* ((rg-command (agental-tools-ripgrep-search pattern
+                                                                   search-path
+                                                                   file-regexp
+                                                                   case-insensitive
+                                                                   lines-after
+                                                                   lines-before))
+                         (output (with-temp-buffer
+                                   (when (zerop (call-process-shell-command rg-command nil t nil))
+                                     (let ((total-lines (count-lines (point-min) (point-max))))
+                                       (concat (format "Match %d lines\n" total-lines)
+                                               (save-excursion
+                                                 (goto-char (point-min))
+                                                 (let ((end-pos (save-excursion
+                                                                  (forward-line 99)
+                                                                  (point))))
+                                                   (buffer-substring-no-properties (point-min) end-pos)))))))))
+                    (if output
+                        output
+                      "No matches found."))
+                (error
+                 (setq successp nil)
+                 (error-message-string err)))
+            (setq successp nil)
+            (format "Path does not exist: %s" search-path)))
+    (agental-tool--insert-tool-call (format "~search~ (%s) in %s%s"
+                                            pattern
+                                            (if (and search-path (file-exists-p search-path))
+                                                (format "[[file:%s][%s]]"
+                                                        search-path
+                                                        (file-name-nondirectory (directory-file-name search-path)))
+                                              search-path)
+                                            (if file-regexp
+                                                (concat " with " file-regexp)
+                                              ""))
+
+                                    "text"
+                                    res
+                                    successp)))
 
 (gptel-make-tool
  :name "search_in_workspace"
