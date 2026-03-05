@@ -260,7 +260,8 @@ PRESET-ARGS is a plist of additional keyword arguments to pass to
                          preset-args))
 
   (dolist (agent agental-subagents)
-    (agental-make-preset agent)))
+    (agental-make-preset agent
+                         preset-args)))
 
 (provide 'agental)
 ;;; agental.el ends here
