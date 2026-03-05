@@ -472,15 +472,16 @@ found in the workspace."
            (where (or (plist-get info :tracking-marker)
                       (plist-get info :position)
                       (plist-get info :reasoning-marker)))
+           (file-link (format "[[file:%s][%s]]" full-path (file-name-nondirectory full-path)))
            (res-start))
       (save-excursion
         (goto-char where)
         (insert
          (propertize (concat "\n\n"
-                             "execute: "
+                             "=execute:= "
                              (if (and offset limit)
-                                 (format "read_file(%s) from %s to %s" full-path offset limit)
-                               (format "read_file(%s) all content" full-path)))
+                                 (format "~read_file~ (%s) from %s to %s" file-link offset limit)
+                               (format "~read_file~ (%s) all content" file-link)))
                      'gptel 'ignore))
         (setq res-start (point))
         (insert
