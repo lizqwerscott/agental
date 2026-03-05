@@ -459,11 +459,46 @@ found in the workspace."
          (project-dir (cdr project-metadata))
          (full-path (if (and project-dir (not (file-name-absolute-p path)))
                         (expand-file-name path project-dir)
-                      (file-truename path))))
+                      (file-truename path)))
+         (res)
+         (successp t))
     (condition-case err
-        (agental-tool--read-file full-path offset limit show-line-numbers)
+        (setq res (agental-tool--read-file full-path offset limit show-line-numbers))
       (error
-       (error-message-string err)))))
+       (setq successp nil)
+       (setq res (error-message-string err))))
+
+    (let* ((info (gptel-fsm-info gptel--fsm-last))
+           (where (or (plist-get info :tracking-marker)
+                      (plist-get info :position)))
+           (res-start))
+      (save-excursion
+        (goto-char where)
+        (insert
+         (propertize (concat "\n\n"
+                             "execute: "
+                             (if (and offset limit)
+                                 (format "read_file(%s) from %s to %s" full-path offset limit)
+                               (format "read_file(%s) all content" full-path)))
+                     'gptel 'ignore))
+        (setq res-start (point))
+        (insert
+         (propertize (concat "\n"
+                             (if successp
+                                 (concat "#+begin_src "
+                                         (with-current-buffer (find-file-noselect full-path)
+                                           (replace-regexp-in-string "-mode$" "" (symbol-name major-mode)))
+                                         "\n"
+                                         res
+                                         "\n"
+                                         "#+end_src")
+                               (concat "Error: " res))
+                             "\n\n")
+                     'gptel 'ignore))
+        (goto-char res-start)
+        (forward-line)
+        (ignore-errors (when (looking-at-p "^#\\+begin_src") (org-cycle))))
+      res)))
 
 (gptel-make-tool
  :name "read_file_in_workspace"
