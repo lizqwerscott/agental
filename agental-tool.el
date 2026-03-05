@@ -470,7 +470,8 @@ found in the workspace."
 
     (let* ((info (gptel-fsm-info gptel--fsm-last))
            (where (or (plist-get info :tracking-marker)
-                      (plist-get info :position)))
+                      (plist-get info :position)
+                      (plist-get info :reasoning-marker)))
            (res-start))
       (save-excursion
         (goto-char where)
