@@ -106,6 +106,7 @@ Return RES."
         (ignore-errors (when (looking-at-p "^#\\+begin_src") (org-cycle))))))
   res)
 
+
 ;;; glob-tool
 
 (require 'seq)
@@ -126,7 +127,6 @@ Empty lines and comments (#...) are ignored."
          (replace-regexp-in-string "^#.*" "" (buffer-string)))
        "\n" t "[[:space:]]+"))))
 
-;;; glob tool
 (defun agental-tool--glob-sort-files (files)
   "Sort FILES by modification time (newest first)."
   (sort files
@@ -225,6 +225,7 @@ Returns a list of files sorted by modification time (newest first). Supports ign
                 :optional t))
  :category "agental")
 
+
 ;;; ls tools
 (defun agental-tool--should-ignore (filename patterns)
   "Return non-nil if FILENAME matches any glob PATTERNS.
@@ -355,6 +356,7 @@ Supports glob-style ignore patterns and optionally respects .gitignore and .aiig
                 :optional t))
  :category "agental")
 
+
 ;;; read file tools
 
 ;; (defcustom agental-tool-max-read-length 1048576
@@ -612,6 +614,7 @@ found in the workspace."
       "line number and a tab character)")))
  :category "agental")
 
+
 ;;; grep tool
 (defun agental-tools-ripgrep-search (pattern path file-regexp case-insensitive lines-after lines-before)
   "Use ripgrep search in PATH with PATTERN.
@@ -763,6 +766,7 @@ context including any pending changes, creations, or deletions."
     :optional t
     :description "Number of lines to show before each match.")))
 
+
 ;;; edit tools
 (defun agental-tool--generate-patch-diff (path orig-content new-content)
   "Generate a unified diff patch comparing ORIG-CONTENT and NEW-CONTENT for PATH.
@@ -1158,6 +1162,7 @@ operation fails."
  :async t
  :category "agental")
 
+
 ;;; write file
 
 (defun agental-tool-write-file-tool (path content)
@@ -1205,7 +1210,7 @@ Handles text content with proper encoding."
           :description "Complete new content that will replace the entire file"))
  :category "agental")
 
-
+
 ;;; Web search
 ;; from https://github.com/karthink/gptel-agent
 
@@ -1307,7 +1312,8 @@ If required, consider using the url as the input to the `Read` tool to get the c
  :async t
  :category "agental")
 
-;;;; Read URLs
+
+;;; Read URLs
 ;; from https://github.com/karthink/gptel-agent
 
 (defun agental-tool--fetch-with-timeout (url url-cb tool-cb failed-msg &rest args)
@@ -1375,6 +1381,7 @@ cleanup."
  :include t
  :category "agental")
 
+
 ;;; Sub Agent
 (defun agental-tool--task-overlay (where &optional agent-type description)
   "Create overlay for agent task at WHERE with AGENT-TYPE and DESCRIPTION."
