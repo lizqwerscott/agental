@@ -37,8 +37,37 @@
   :type '(list symbol)
   :group 'agental)
 
+(defcustom agental-tool-show-tool-call 'auto
+  "Control whether tool call results are displayed in the buffer.
+
+Possible values:
+- t: always show tool call results
+- nil: never show tool call results
+- auto: show tool call results only when not in a subagent context
+
+When set to auto (the default), tool call results are displayed in the main
+conversation buffer but hidden in subagent contexts. This helps keep the main
+conversation clean while allowing tool calls to be visible when directly
+interacting with the agent."
+  :type '(choice (const :tag "Always" t)
+                 (const :tag "Auto" auto)
+                 (const :tag "Never" nil))
+  :group 'agental)
+
 (defconst agental-tool--hrule
   (propertize "\n" 'face '(:inherit shadow :underline t :extend t)))
+
+(defun agental-tool--check-show-tool-call ()
+  "Return non-nil if tool call results should be shown in the buffer.
+
+When `agental-tool-show-tool-call' is:
+- t: always show
+- nil: never show
+- auto: show only not in subagent"
+  (when agental-tool-show-tool-call
+    (or (eq agental-tool-show-tool-call t)
+        (let* ((info (gptel-fsm-info gptel--fsm-last)))
+          (not (plist-get info :subagent))))))
 
 (defun agental-tool--insert-tool-call (header show-mode res successp)
   "Insert a formatted tool call result into the GPTel buffer.
@@ -48,33 +77,34 @@ SHOW-MODE is the Org source block language mode for successful results.
 RES is the result string to display.
 SUCCESSP is non-nil if the tool call succeeded.
 Return RES."
-  (let* ((info (gptel-fsm-info gptel--fsm-last))
-         (where (or (plist-get info :tracking-marker)
-                    (plist-get info :position)
-                    (plist-get info :reasoning-marker)))
-         (res-start))
-    (save-excursion
-      (goto-char where)
-      (insert
-       (propertize (concat (unless (and (bolp) (eolp))
+  (when (agental-tool--check-show-tool-call)
+    (let* ((info (gptel-fsm-info gptel--fsm-last))
+           (where (or (plist-get info :tracking-marker)
+                      (plist-get info :position)
+                      (plist-get info :reasoning-marker)))
+           (res-start))
+      (save-excursion
+        (goto-char where)
+        (insert
+         (propertize (concat (unless (and (bolp) (eolp))
+                               "\n\n")
+                             "=execute:= " header)
+                     'gptel 'ignore))
+        (setq res-start (point))
+        (insert
+         (propertize (concat "\n"
+                             (if successp
+                                 (concat "#+begin_src " show-mode "\n"
+                                         res
+                                         "\n"
+                                         "#+end_src")
+                               (concat "Error: " res))
                              "\n\n")
-                           "=execute:= " header)
-                   'gptel 'ignore))
-      (setq res-start (point))
-      (insert
-       (propertize (concat "\n"
-                           (if successp
-                               (concat "#+begin_src " show-mode "\n"
-                                       res
-                                       "\n"
-                                       "#+end_src")
-                             (concat "Error: " res))
-                           "\n\n")
-                   'gptel 'ignore))
-      (goto-char res-start)
-      (forward-line)
-      (ignore-errors (when (looking-at-p "^#\\+begin_src") (org-cycle))))
-    res))
+                     'gptel 'ignore))
+        (goto-char res-start)
+        (forward-line)
+        (ignore-errors (when (looking-at-p "^#\\+begin_src") (org-cycle))))))
+  res)
 
 ;;; glob-tool
 
@@ -1443,7 +1473,8 @@ PROMPT is the detailed prompt instructing the agent on what is required."
       (gptel--update-status " Calling Agent..." 'font-lock-escape-face)
       (gptel-request prompt
         :context (agental-tool--task-overlay where agent-type description)
-        :fsm (gptel-make-fsm :handlers agental-tool-request--handlers)
+        :fsm (gptel-make-fsm :handlers agental-tool-request--handlers
+                             :info (list :subagent t))
         :callback
         (lambda (resp info)
           (let ((ov (plist-get info :context)))
