@@ -1165,8 +1165,140 @@ operation fails."
 
 ;;; write file
 
-(defun agental-tool-write-file-tool (path content)
+(defvar agental-tool--write-overlay nil)
+
+(defvar-keymap agental-tool--write-file-keymap
+  "C-c C-c" #'agental-tool-write-file-approve
+  "C-c C-k" #'agental-tool-write-file-reject
+  "C-c C-d" #'agental-tool-write-file-show-write)
+
+(defun agental-tool--write-file-overlay (where path content callback)
+  "Insert an overlay at WHERE to preview and manage file writes for PATH.
+The overlay displays a preview of the CONTENT to be written (truncated after
+`agental-tool-diff-preview-lines' lines). The CALLBACK function is called after
+the user finishes the write session.
+
+The overlay is interactive and provides a keymap with the following commands:
+\\<agental-tool--write-file-keymap>
+\\[agental-tool-write-file-approve] writes the content to PATH and calls CALLBACK.
+\\[agental-tool-write-file-reject] rejects the write and removes the overlay.
+\\[agental-tool-write-file-show-write] shows the full content to be written.
+
+The overlay is stored in the variable `agental-tool--write-overlay'. It can be
+cleared with the command `agental-tool--write-clear-overlay'."
+  (let* ((show-new-file-text (propertize
+                              (concat "#+begin_src text\n"
+                                      (with-temp-buffer
+                                        (insert content)
+                                        (goto-line (1+ agental-tool-diff-preview-lines))
+                                        (buffer-substring (point-min) (point)))
+                                      "\n#+end_src\n")
+                              'read-only t))
+         (bounds
+          (save-excursion
+            (let ((start nil))
+              (goto-char where)
+              (insert "\n")
+              (setq start (point))
+              (insert show-new-file-text)
+              (cons start (point)))))
+         (ov (make-overlay (car bounds) (cdr bounds) nil t)))
+    (setq agental-tool--write-overlay
+          (prog1 ov
+            (overlay-put ov 'callback callback)
+            (overlay-put ov 'content content)
+            (overlay-put ov 'path path)
+            (overlay-put ov 'line-prefix "")
+            (overlay-put ov 'keymap agental-tool--write-file-keymap)
+            (overlay-put ov 'before-string
+                         (concat agental-tool--hrule
+                                 (propertize "Approve: " 'face 'font-lock-string-face)
+                                 (propertize "C-c C-c" 'face 'help-key-binding)
+                                 (propertize "  Reject: " 'face 'font-lock-string-face)
+                                 (propertize "C-c C-k" 'face 'help-key-binding)
+                                 (propertize "  Preview: " 'face 'font-lock-string-face)
+                                 (propertize "C-c C-d" 'face 'help-key-binding)
+                                 "\n"
+                                 (propertize (concat "Write To: ")
+                                             'face 'font-lock-keyword-face)
+                                 (propertize path 'face 'font-lock-string-face)
+                                 "\n"))
+            (overlay-put ov 'after-string agental-tool--hrule)))))
+
+(defun agental-tool--write-clear-overlay (ov)
+  "Clear the write overlay OV.
+Delete the overlay and remove the text it occupies from the buffer."
+  (interactive)
+  (when (overlayp ov)
+    (let ((start (overlay-start ov))
+          (end (overlay-end ov)))
+      (delete-overlay ov)
+      (when (and start end)
+        (save-excursion
+          (goto-char start)
+          (let ((inhibit-read-only t))
+            (delete-region start end)))))))
+
+(defun agental-tool--write-cleanup-with-callback (ov message)
+  "Clean up overlay OV and call its callback with MESSAGE."
+  (let ((callback (overlay-get ov 'callback)))
+    (agental-tool--write-clear-overlay ov)
+    (funcall callback message)))
+
+(defun agental-tool-write-file-approve ()
+  "Write content to file."
+  (interactive)
+  (let ((path (overlay-get agental-tool--write-overlay 'path))
+        (content (overlay-get agental-tool--write-overlay 'content))
+        (callback (overlay-get agental-tool--write-overlay 'callback)))
+
+    (condition-case err
+        (progn
+          (make-directory (file-name-directory path) t)
+
+          (with-temp-file path
+            (insert content))
+
+          (agental-tool--write-cleanup-with-callback agental-tool--write-overlay "Write file successfully."))
+      (error
+       (funcall callback
+                (concat "Write file error: "
+                        (error-message-string err)
+                        "."))))))
+
+(defun agental-tool-write-file-reject ()
+  "Reject the changes and remove the write overlay."
+  (interactive)
+  (agental-tool--write-cleanup-with-callback agental-tool--write-overlay "Write rejected."))
+
+(defun agental-tool-write-file-show-write ()
+  "Show write file content."
+  (interactive)
+  (let* ((path (overlay-get agental-tool--write-overlay 'path))
+         (content (overlay-get agental-tool--write-overlay 'content))
+         (preview-buffer (get-buffer-create (format "*Write file preview for %s*" path))))
+    (with-current-buffer preview-buffer
+      (let ((was-read-only buffer-read-only))
+        ;; Temporarily disable read-only mode to update the buffer.
+        (when was-read-only
+          (read-only-mode -1))
+        (erase-buffer)
+        (insert content)
+        (when was-read-only
+          (read-only-mode 1)))
+
+      (text-mode)
+
+      (goto-char (point-min))
+
+      (display-buffer preview-buffer
+                      '(display-buffer-reuse-window
+                        (body-function . select-window))))))
+
+(defun agental-tool-write-file-tool (callback path content)
   "Create a new file or completely overwrite an existing file with CONTENT.
+
+CALLBACK is the callback to return a value to the loop.
 
 PATH is the path to the file, relative to the workspace root.
 
@@ -1181,12 +1313,10 @@ Handles text content with proper encoding."
              (full-path (if (and project-dir (not (file-name-absolute-p path)))
                             (expand-file-name path project-dir)
                           (file-truename path))))
-        ;; Ensure directory exists
-        (make-directory (file-name-directory full-path) t)
-        ;; Write content to file
-        (with-temp-file full-path
-          (insert content))
-        nil)  ; Return nil on success
+        (let* ((info (gptel-fsm-info gptel--fsm-last))
+               (where (or (plist-get info :tracking-marker)
+                          (plist-get info :position))))
+          (agental-tool--write-file-overlay where full-path content callback)))
     (error
      (error-message-string err))))
 
@@ -1200,7 +1330,8 @@ Handles text content with proper encoding."
   "\n"
   "WARNING: Overwrites ALL existing content. Use edit_file_in_workspace for partial changes.\n"
   "\n"
-  "Returns null on success. Fails if the path is invalid or outside the workspace.")
+  "Returns a success message on successful write, or an error message on failure.\n"
+  "Requires user approval before writing (C-c C-c to approve, C-c C-k to reject).")
  :confirm nil
  :include nil
  :args '((:name "path" :type string :description "Path to the file, relative to workspace root")
@@ -1208,6 +1339,7 @@ Handles text content with proper encoding."
           "content"
           :type string
           :description "Complete new content that will replace the entire file"))
+ :async t
  :category "agental")
 
 
