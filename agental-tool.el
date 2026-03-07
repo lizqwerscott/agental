@@ -1263,10 +1263,11 @@ Delete the overlay and remove the text it occupies from the buffer."
                         (error-message-string err)
                         "."))))))
 
-(defun agental-tool-write-file-reject ()
-  "Reject the changes and remove the write overlay."
-  (interactive)
-  (agental-tool--write-cleanup-with-callback agental-tool--write-overlay "Write rejected."))
+(defun agental-tool-write-file-reject (reason)
+  "Reject the write with REASON and remove the write overlay."
+  (interactive (list (read-string "Reject Reason: ")))
+  (let ((res (concat "Write rejected, User reason: " reason)))
+    (agental-tool--write-cleanup-with-callback agental-tool--write-overlay res)))
 
 (defun agental-tool-write-file-show-write ()
   "Show write file content."
