@@ -106,6 +106,26 @@ Return RES."
         (ignore-errors (when (looking-at-p "^#\\+begin_src") (org-cycle))))))
   res)
 
+(defun agental-tool--clear-overlay (ov)
+  "Clear the OV overlay.
+Delete the overlay and remove the text it occupies from the buffer."
+  (interactive)
+  (when (overlayp ov)
+    (let ((start (overlay-start ov))
+          (end (overlay-end ov)))
+      (delete-overlay ov)
+      (when (and start end)
+        (save-excursion
+          (goto-char start)
+          (let ((inhibit-read-only t))
+            (delete-region start end)))))))
+
+(defun agental-tool--finish (ov message)
+  "Clean up overlay OV and call its callback with MESSAGE."
+  (let ((callback (overlay-get ov 'callback)))
+    (agental-tool--clear-overlay ov)
+    (funcall callback message)))
+
 
 ;;; glob-tool
 
@@ -1006,26 +1026,6 @@ cleared with the command `agental-tool--edit-clear-overlay'."
                                  "\n"))
             (overlay-put ov 'after-string agental-tool--hrule)))))
 
-(defun agental-tool--edit-clear-overlay (ov)
-  "Clear the edit overlay OV.
-Delete the overlay and remove the text it occupies from the buffer."
-  (interactive)
-  (when (overlayp ov)
-    (let ((start (overlay-start ov))
-          (end (overlay-end ov)))
-      (delete-overlay ov)
-      (when (and start end)
-        (save-excursion
-          (goto-char start)
-          (let ((inhibit-read-only t))
-            (delete-region start end)))))))
-
-(defun agental-tool--edit-cleanup-with-callback (ov message)
-  "Clean up overlay OV and call its callback with MESSAGE."
-  (let ((callback (overlay-get ov 'callback)))
-    (agental-tool--edit-clear-overlay ov)
-    (funcall callback message)))
-
 (defun agental-tool-edit-file-apply-diff ()
   "Apply diff."
   (interactive)
@@ -1041,7 +1041,7 @@ Delete the overlay and remove the text it occupies from the buffer."
               (insert new-content))
             (save-current-buffer))
 
-          (agental-tool--edit-cleanup-with-callback agental-tool--edit-overlay "All Changes applied successfully."))
+          (agental-tool--finish agental-tool--edit-overlay "All Changes applied successfully."))
       (error
        (funcall callback
                 (concat "Apply diff error: "
@@ -1051,13 +1051,13 @@ Delete the overlay and remove the text it occupies from the buffer."
 (defun agental-tool-edit-file-finish ()
   "Finish edit file."
   (interactive)
-  (agental-tool--edit-cleanup-with-callback agental-tool--edit-overlay "Edit session finished."))
+  (agental-tool--finish agental-tool--edit-overlay "Edit session finished."))
 
 (defun agental-tool-edit-file-reject (reason)
   "Reject the changes with REASON and remove the edit overlay."
   (interactive (list (read-string "Reject Reason: ")))
   (let ((res (concat "Changes rejected, User reason: " reason)))
-    (agental-tool--edit-cleanup-with-callback agental-tool--edit-overlay res)))
+    (agental-tool--finish agental-tool--edit-overlay res)))
 
 (defun agental-tool-edit-file-show-diff ()
   "Show diff buffer."
@@ -1222,26 +1222,6 @@ cleared with the command `agental-tool--write-clear-overlay'."
                                  "\n"))
             (overlay-put ov 'after-string agental-tool--hrule)))))
 
-(defun agental-tool--write-clear-overlay (ov)
-  "Clear the write overlay OV.
-Delete the overlay and remove the text it occupies from the buffer."
-  (interactive)
-  (when (overlayp ov)
-    (let ((start (overlay-start ov))
-          (end (overlay-end ov)))
-      (delete-overlay ov)
-      (when (and start end)
-        (save-excursion
-          (goto-char start)
-          (let ((inhibit-read-only t))
-            (delete-region start end)))))))
-
-(defun agental-tool--write-cleanup-with-callback (ov message)
-  "Clean up overlay OV and call its callback with MESSAGE."
-  (let ((callback (overlay-get ov 'callback)))
-    (agental-tool--write-clear-overlay ov)
-    (funcall callback message)))
-
 (defun agental-tool-write-file-approve ()
   "Write content to file."
   (interactive)
@@ -1256,7 +1236,7 @@ Delete the overlay and remove the text it occupies from the buffer."
           (with-temp-file path
             (insert content))
 
-          (agental-tool--write-cleanup-with-callback agental-tool--write-overlay "Write file successfully."))
+          (agental-tool--finish agental-tool--write-overlay "Write file successfully."))
       (error
        (funcall callback
                 (concat "Write file error: "
@@ -1267,7 +1247,7 @@ Delete the overlay and remove the text it occupies from the buffer."
   "Reject the write with REASON and remove the write overlay."
   (interactive (list (read-string "Reject Reason: ")))
   (let ((res (concat "Write rejected, User reason: " reason)))
-    (agental-tool--write-cleanup-with-callback agental-tool--write-overlay res)))
+    (agental-tool--finish agental-tool--write-overlay res)))
 
 (defun agental-tool-write-file-show-write ()
   "Show write file content."
