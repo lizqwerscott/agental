@@ -1053,10 +1053,11 @@ Delete the overlay and remove the text it occupies from the buffer."
   (interactive)
   (agental-tool--edit-cleanup-with-callback agental-tool--edit-overlay "Edit session finished."))
 
-(defun agental-tool-edit-file-reject ()
-  "Reject the changes and remove the edit overlay."
-  (interactive)
-  (agental-tool--edit-cleanup-with-callback agental-tool--edit-overlay "Changes rejected."))
+(defun agental-tool-edit-file-reject (reason)
+  "Reject the changes with REASON and remove the edit overlay."
+  (interactive (list (read-string "Reject Reason: ")))
+  (let ((res (concat "Changes rejected, User reason: " reason)))
+    (agental-tool--edit-cleanup-with-callback agental-tool--edit-overlay res)))
 
 (defun agental-tool-edit-file-show-diff ()
   "Show diff buffer."
