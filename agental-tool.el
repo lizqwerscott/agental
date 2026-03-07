@@ -203,7 +203,10 @@ first). If no files are found, returns nil and displays a message."
  :function #'agental-tool-glob-tool
  :description
  "Find files matching a given glob pattern using Emacs' file-expand-wildcards.
-Returns a list of files sorted by modification time (newest first). Supports ignore rules and recursive patterns."
+
+Returns a list of files sorted by modification time (newest first).
+Supports ignore rules and recursive patterns.
+Uses Emacs' file-expand-wildcards with .gitignore and .aiignore support."
  :args (list
         '(:name "pattern"
                 :type string
@@ -289,14 +292,7 @@ Arguments:
   DIR-PATH (string): The directory path to list.
   IGNORE (list of string): List of glob patterns to ignore.
   RESPECT-GIT-IGNORE (boolean): Whether to respect .gitignore (default: t).
-  RESPECT-AI-IGNORE (boolean): Whether to respect .aiignore (default: t).
-
-Returns a list of alists describing files, each with keys:
-  - name: filename
-  - path: absolute path
-  - isDirectory: non-nil if it is a directory
-  - size: file size in bytes
-  - modifiedTime: last modification time."
+  RESPECT-AI-IGNORE (boolean): Whether to respect .aiignore (default: t)."
   (let* ((dir (or dir-path default-directory))
          (successp t)
          (res))
@@ -337,7 +333,10 @@ Returns a list of alists describing files, each with keys:
  :function #'agental-tool-ls-tool
  :description
  "List the names of files and subdirectories directly within a specified directory path.
-Supports glob-style ignore patterns and optionally respects .gitignore and .aiignore files."
+
+Returns directory contents with file metadata (name, path, size, modification time).
+Supports glob-style ignore patterns and optionally respects .gitignore and .aiignore files.
+Directories are listed first, then files sorted alphabetically."
  :args (list
         '(:name "dir-path"
                 :type string
@@ -579,10 +578,13 @@ found in the workspace."
  :name "read_file_in_workspace"
  :function #'agental-tool-read-file-tool
  :description
- (concat
-  "Reads and returns the content of a specified file. If the file is large, the content will be truncated."
-  "The tool's response will clearly indicate if truncation has occurred and will provide details on how to read more of the file using the 'offset' and 'limit' parameters."
-  "Handles text files. For text files, it can read specific line ranges.")
+ (format "Reads and returns the content of a specified file.
+
+If the file is large, the content will be truncated. (max with %s line)
+The tool's response will clearly indicate if truncation has occurred and will provide details on how to read more of the file using the 'offset' and 'limit' parameters.
+Handles text files. For text files, it can read specific line ranges.
+Supports line numbers display in cat -n style."
+         agental-tool-max-read-length)
  :confirm nil
  :include nil
  :args
@@ -592,26 +594,22 @@ found in the workspace."
     :type number
     :optional t
     :description
-    ,(concat
-      "Optional: For text files, the 0-based line number to start reading from."
-      "Requires 'limit' to be set. Use for paginating through large files."))
+    "Optional: For text files, the 0-based line number to start reading from.
+Requires 'limit' to be set. Use for paginating through large files.")
    (:name
     "limit"
     :type number
     :optional t
     :description
-    ,(concat
-      "Optional: For text files, maximum number of lines to read."
-      " Use with 'offset' to paginate through large files."
-      " If omitted, reads the entire file (if feasible, up to a default limit)."))
+    "Optional: For text files, maximum number of lines to read.
+Use with 'offset' to paginate through large files.
+If omitted, reads the entire file (if feasible, up to a default limit).")
    (:name
     "show_line_numbers"
     :type boolean
     :optional t
     :description
-    ,(concat
-      "Include line numbers in output (cat -n style: each line prefixed with right-aligned "
-      "line number and a tab character)")))
+    "Include line numbers in output (cat -n style: each line prefixed with right-aligned line number and a tab character)"))
  :category "agental")
 
 
@@ -746,10 +744,8 @@ context including any pending changes, creations, or deletions."
     :type string
     :optional t
     :description
-    ,(concat
-      "Filter files by regular expression matched against file path relative to search path. "
-      "Examples: '\\.py$' for Python files, 'src/.*\\.js$' for JS files in src/, "
-      "'test.*\\.py$' for test files"))
+    "Filter files by regular expression matched against file path relative to search path.
+Examples: '\\.py$' for Python files, 'src/.*\\.js$' for JS files in src/, 'test.*\\.py$' for test files")
    (:name
     "case_insensitive"
     :type boolean
@@ -1129,11 +1125,13 @@ operation fails."
  :name "edit_file_in_workspace"
  :function #'agental-tool-edit-file-tool
  :description
- (concat
-  "Make multiple exact string replacements in a single file. "
-  "Edits are applied sequentially in array order to the same file. "
-  "Each edit requires exact whitespace matching. Do NOT include line numbers in old_text or new_text. "
-  "If any edit fails, no changes are made. Returns null on success.")
+ "Make multiple exact string replacements in a single file.
+
+Edits are applied sequentially in array order to the same file.
+Each edit requires exact whitespace matching. Do NOT include line numbers in old_text or new_text.
+If any edit fails, no changes are made.
+Requires user approval before applying changes.
+Returns success or error message based on user action and edit results."
  :confirm nil
  :include nil
  :args
@@ -1150,9 +1148,7 @@ operation fails."
       (:type
        string
        :description
-       ,(concat
-         "Exact text to find and replace. Must match precisely including whitespace "
-         "and newlines. Do NOT include line numbers."))
+       "Exact text to find and replace. Must match precisely including whitespace and newlines. Do NOT include line numbers.")
       :new_text (:type string :description "Text to replace the old_text with")
       :replace_all
       (:type
@@ -1649,8 +1645,9 @@ PROMPT is the detailed prompt instructing the agent on what is required."
 
 (gptel-make-tool
  :name "Agent"
- :description "Launch a specialized subagent to handle complex, multi-step tasks autonomously.  \
-Agents run independently and return results in one message.  \
+ :description "Launch a specialized subagent to handle complex, multi-step tasks autonomously.
+
+Agents run independently and return results in one message.
 Use for open-ended searches, complex research, or when uncertain about finding results in first few tries."
  :function #'agental-tool-subagent-tool
  :args `(( :name "subagent_type"
