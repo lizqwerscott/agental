@@ -27,16 +27,6 @@
 (require 'agental)
 (require 'agental-context)
 
-(defcustom agental-tool-read-tools (list #'agental-tool-glob-tool #'agental-tool-ls-tool #'agental-tool-read-file-tool)
-  ""
-  :type '(list symbol)
-  :group 'agental)
-
-(defcustom agental-tool-edit-tools (list #'agental-tool-edit-file-tool #'agental-tool-write-file-tool)
-  ""
-  :type '(list symbol)
-  :group 'agental)
-
 (defcustom agental-tool-show-tool-call 'auto
   "Control whether tool call results are displayed in the buffer.
 
