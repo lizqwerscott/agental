@@ -773,6 +773,62 @@ Examples: '\\.py$' for Python files, 'src/.*\\.js$' for JS files in src/, 'test.
     :description "Number of lines to show before each match.")))
 
 
+;;; outline tool
+
+(declare-function imenu--flatten-index-alist "imenu")
+(declare-function imenu--make-index-alist "imenu")
+
+(defun agental-tool--get-file-outline (path)
+  "Return a string representation of the outline for PATH.
+
+The outline is generated from the imenu index and includes the name and
+line number of each item. Returns a string with each item on a separate line
+in the format: 'function_name (line X)'."
+  (when-let* ((path (file-truename path))
+              (buffer (find-file-noselect path)))
+    (with-current-buffer buffer
+      (string-join
+       (cl-loop for (current . rest) on (cdr (imenu--flatten-index-alist (imenu--make-index-alist) t))
+                for pos = (marker-position (cdr current))
+                for line = (when pos
+                             (line-number-at-pos pos))
+                collect (concat (substring-no-properties (car current))
+                                " (line "
+                                (number-to-string line)
+                                ")"))
+       "\n"))))
+
+(defun agental-tool-get-file-outline-tool (path)
+  "Get the outline (structure) of a file.
+
+PATH is the file path to analyze. Returns a string containing the file's
+outline with function/class names and their line numbers."
+  (let ((successp t)
+        res)
+    (condition-case err
+        (setq res (agental-tool--get-file-outline path))
+      (error
+       (setq successp nil)
+       (setq res (error-message-string err))))
+    (let* ((file-link (format "[[file:%s][%s]]" (file-truename path) (file-name-nondirectory path))))
+      (agental-tool--insert-tool-call (format "~get_file_outline~ (%s)" file-link)
+                                      "text"
+                                      (or res "No outline available for this file.")
+                                      successp))))
+
+(gptel-make-tool
+ :name "get_file_outline"
+ :function #'agental-tool-get-file-outline-tool
+ :description
+ "Get the outline (structure) of a file.
+
+Returns a string containing the file's outline with function/class names and their line numbers.
+The outline is generated from the imenu index."
+ :args (list
+        '(:name "path" :type string :description "Path to the file to analyze"))
+ :category "agental")
+
+
 ;;; edit tools
 (defun agental-tool--generate-patch-diff (path orig-content new-content)
   "Generate a unified diff patch comparing ORIG-CONTENT and NEW-CONTENT for PATH.
