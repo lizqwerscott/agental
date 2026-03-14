@@ -116,6 +116,102 @@ Delete the overlay and remove the text it occupies from the buffer."
     (agental-tool--clear-overlay ov)
     (funcall callback message)))
 
+(defun agental-tool--confirm-overlay (from to &optional no-hide)
+  "Set up tool call preview overlay FROM TO.
+
+If NO-HIDE is non-nil, don't hide the overlay body by default."
+  (let ((ov (make-overlay from to nil t)))
+    (overlay-put ov 'evaporate t)
+    (overlay-put ov 'agental-tool-tool t)
+    (overlay-put ov 'priority 10)
+    (overlay-put ov 'keymap
+                 (make-composed-keymap
+                  (define-keymap
+                    "n"     'agental-tool--next-overlay
+                    "p"     'agental-tool--previous-overlay
+                    "q"     'gptel--reject-tool-calls
+                    "<tab>" 'agental-tool--cycle-overlay
+                    "TAB"   'agental-tool--cycle-overlay)
+                  gptel-tool-call-actions-map))
+    (unless no-hide
+      (agental-tool--cycle-overlay ov))
+    ov))
+
+(defun agental-tool--cycle-overlay (ov)
+  "Cycle tool call preview overlay OV at point."
+  (interactive (list (cdr (get-char-property-and-overlay
+                           (point) 'agental-tool-tool))))
+  (save-excursion
+    (goto-char (overlay-start ov))
+    (let ((line-end (line-end-position))
+          (end      (overlay-end ov)))
+      (pcase-let ((`(,value . ,hide-ov)
+                   (get-char-property-and-overlay line-end 'invisible)))
+        (if (and hide-ov (eq value t))
+            (delete-overlay hide-ov)
+          (unless hide-ov (setq hide-ov (make-overlay line-end (1- end) nil t)))
+          (overlay-put hide-ov 'evaporate t)
+          (overlay-put hide-ov 'invisible t)
+          (overlay-put hide-ov 'before-string " ▼"))))))
+
+(defun agental-tool--next-overlay ()
+  "Jump to the next `agental-tool' tool overlay."
+  (interactive)
+  (when-let* ((ov (cdr (get-char-property-and-overlay
+                        (point) 'agental-tool-tool)))
+              (end (overlay-end ov)))
+    (when (get-char-property end 'gptel-tool)
+      (goto-char end))))
+
+(defun agental-tool--previous-overlay ()
+  "Jump to the previous `agental-tool' tool overlay."
+  (interactive)
+  (when-let* ((ov (cdr (get-char-property-and-overlay
+                        (1- (point)) 'agental-tool-tool))))
+    (goto-char (overlay-start ov))))
+
+(defsubst agental-tool--block-bg ()
+  "Return a background face suitable for displaying code."
+  (cond
+   ((derived-mode-p 'org-mode) 'org-block)
+   ((derived-mode-p 'markdown-mode) 'markdown-code-face)
+   (t `( :background ,(face-attribute 'mode-line-inactive :background)
+         :extend t))))
+
+(defun agental-tool--fontify-block (path-or-mode start end)
+  "Fontify region from START to END.
+
+Fontification is assuming it is the contents of file PATH-OR-MODE (if it
+is a string), or major-mode (if it is a symbol).  Applied font-lock-face
+properties persist through refontification."
+  (let ((lang-mode)                     ; (org-src-get-lang-mode lang)
+        (org-buffer (current-buffer)))
+    (with-temp-buffer
+      (insert-buffer-substring-no-properties org-buffer start end)
+      (insert " ")                      ; Add space to ensure property change
+      (delay-mode-hooks
+        (if (symbolp path-or-mode)
+            (setq lang-mode path-or-mode)
+          (let ((buffer-file-name path-or-mode))
+            (setq lang-mode
+                  (or (cdr (assoc-string
+                            (concat
+                             "\\." (file-name-extension path-or-mode) "\\'")
+                            auto-mode-alist))
+                      (progn (set-auto-mode t) major-mode)))))
+        (funcall lang-mode))
+      (font-lock-ensure)
+      (let ((pos (point-min)))
+        (while (< pos (1- (point-max))) ; Skip the added space
+          (let* ((next (next-property-change pos nil (1- (point-max))))
+                 (face-prop (get-text-property pos 'face)))
+            (when face-prop
+              (put-text-property
+               (+ start (- pos (point-min)))
+               (+ start (- (or next (1- (point-max))) (point-min)))
+               'font-lock-face face-prop org-buffer))
+            (setq pos (or next (1- (point-max))))))))))
+
 
 ;;; glob-tool
 
@@ -783,7 +879,7 @@ Examples: '\\.py$' for Python files, 'src/.*\\.js$' for JS files in src/, 'test.
 
 The outline is generated from the imenu index and includes the name and
 line number of each item. Returns a string with each item on a separate line
-in the format: 'function_name (line X)'."
+in the format: function_name (line X)."
   (when-let* ((path (file-truename path))
               (buffer (find-file-noselect path)))
     (with-current-buffer buffer
@@ -1539,31 +1635,35 @@ cleanup."
 
 
 ;;; Sub Agent
-(defun agental-tool--task-overlay (where &optional agent-type description)
-  "Create overlay for agent task at WHERE with AGENT-TYPE and DESCRIPTION."
-  (let* ((bounds                  ;where to place the overlay, handle edge cases
-          (save-excursion
-            (goto-char where)
-            (when (bobp) (insert "\n"))
-            (if (and (bolp) (eolp))
-                (cons (1- (point)) (point))
-              (cons (line-beginning-position) (line-end-position)))))
-         (ov (make-overlay (car bounds) (cdr bounds) nil t))
-         (msg (concat
-               (unless (eq (char-after (car bounds)) 10) "\n")
-               "\n" agental-tool--hrule
-               (propertize (concat (capitalize agent-type) " Task: ")
-                           'face 'font-lock-escape-face)
-               (propertize description 'face 'font-lock-doc-face) "\n")))
-    (prog1 ov
-      (overlay-put ov 'agental-tool t)
-      (overlay-put ov 'count 0)
-      (overlay-put ov 'msg msg)
-      (overlay-put ov 'line-prefix "")
-      (overlay-put
-       ov 'after-string
-       (concat msg (propertize "Waiting..." 'face 'warning) "\n"
-               agental-tool--hrule)))))
+(defvar agental-tool-request--handlers
+  `((WAIT ,#'agental-tool--indicate-wait
+          ,#'gptel--handle-wait)
+    (TOOL ,#'gptel--handle-pre-tool
+          ,#'agental-tool--indicate-tool-call
+          ,#'gptel--handle-tool-use)
+    (TRET ,#'gptel--handle-post-tool
+          ,#'gptel--handle-tool-result))
+  "See `gptel-request--handlers'.")
+
+(defun agental-tool--task-preview-setup (arg-values _info)
+  "Preview setup for Agent.
+INFO is the tool call info plist.
+ARG-VALUES is a list: (type description prompt)"
+  (pcase-let ((from (point))
+              (`(,type ,desc ,prompt) arg-values))
+    (insert "("
+            (propertize "Agent " 'font-lock-face 'font-lock-keyword-face)
+            (propertize (prin1-to-string type)
+                        'font-lock-face 'font-lock-escape-face)
+            " " (propertize (prin1-to-string desc)
+                            'font-lock-face
+                            '(:inherit font-lock-constant-face :inherit bold))
+            "\n" (propertize (prin1-to-string prompt)
+                             'line-prefix "  "
+                             'wrap-prefix "  "
+                             'font-lock-face 'font-lock-constant-face)
+            ")\n\n")
+    (agental-tool--confirm-overlay from (point) t)))
 
 (defun agental-tool--indicate-wait (fsm)
   "Display waiting indicator for agent task FSM."
@@ -1609,14 +1709,33 @@ cleanup."
         (overlay-put ov 'count (+ info-count (length tool-use)))
         (overlay-put ov 'after-string new-info-msg)))))
 
-(defvar agental-tool-request--handlers
-  `((WAIT ,#'agental-tool--indicate-wait
-          ,#'gptel--handle-wait)
-    (TOOL ,#'agental-tool--indicate-tool-call
-          ,#'gptel--handle-tool-use))
-  "See `gptel-request--handlers'.")
+(defun agental-tool--task-overlay (where &optional agent-type description)
+  "Create overlay for agent task at WHERE with AGENT-TYPE and DESCRIPTION."
+  (let* ((bounds                  ;where to place the overlay, handle edge cases
+          (save-excursion
+            (goto-char where)
+            (when (bobp) (insert "\n"))
+            (if (and (bolp) (eolp))
+                (cons (1- (point)) (point))
+              (cons (line-beginning-position) (line-end-position)))))
+         (ov (make-overlay (car bounds) (cdr bounds) nil t))
+         (msg (concat
+               (unless (eq (char-after (car bounds)) 10) "\n")
+               "\n" agental-tool--hrule
+               (propertize (concat (capitalize agent-type) " Task: ")
+                           'face 'font-lock-escape-face)
+               (propertize description 'face 'font-lock-doc-face) "\n")))
+    (prog1 ov
+      (overlay-put ov 'agental-tool t)
+      (overlay-put ov 'count 0)
+      (overlay-put ov 'msg msg)
+      (overlay-put ov 'line-prefix "")
+      (overlay-put
+       ov 'after-string
+       (concat msg (propertize "Waiting..." 'face 'warning) "\n"
+               agental-tool--hrule)))))
 
-(defun agental-tool-subagent-tool (main-cb agent-type description prompt)
+(defun agental-tool--task (main-cb agent-type description prompt)
   "Call a gptel agent to do specific compound tasks.
 
 MAIN-CB is the main callback to return a value to the main loop.
@@ -1647,7 +1766,7 @@ PROMPT is the detailed prompt instructing the agent on what is required."
                (funcall main-cb
                         (format "Error: Task %s could not finish task \"%s\". \
 
-  Error details: %S"
+Error details: %S"
                                 agent-type description (plist-get info :error))))
               (`(tool-call . ,calls)
                (unless (plist-get info :tracking-marker)
@@ -1666,18 +1785,15 @@ PROMPT is the detailed prompt instructing the agent on what is required."
                (delete-overlay ov)
                (funcall main-cb
                         (format "Error: Task \"%s\" was aborted by the user. \
-  %s could not finish."
-                                description agent-type)))))))))
-  )
-
+%s could not finish."
+                                description agent-type))))))))))
 
 (gptel-make-tool
- :name "Agent"
- :description "Launch a specialized subagent to handle complex, multi-step tasks autonomously.
-
-Agents run independently and return results in one message.
+ :name "RunAgent"
+ :description "Launch a specialized agent to handle complex, multi-step tasks autonomously.  \
+Agents run independently and return results in one message.  \
 Use for open-ended searches, complex research, or when uncertain about finding results in first few tries."
- :function #'agental-tool-subagent-tool
+ :function #'agental-tool--task
  :args `(( :name "subagent_type"
            :type string
            :enum ["explore-agent"]
@@ -1694,6 +1810,12 @@ Should include exactly what information the agent should return."))
  :confirm t
  :include t)
 
+;;; Register tool call preview functions
+(pcase-dolist (`(,tool-name . ,setup-fn)
+               `(("RunAgent"     ,#'agental-tool--task-preview-setup)))
+  (setf (alist-get tool-name gptel--tool-preview-alist
+                   nil nil #'equal)
+        setup-fn))
 
 (provide 'agental-tool)
 ;;; agental-tool.el ends here

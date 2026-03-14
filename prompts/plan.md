@@ -6,7 +6,7 @@ description: >
   Does not execute changes - only creates comprehensive, actionable plans.
 type: main
 tools:
-  - Agent
+  - RunAgent
   - read_file_in_workspace
   - search_in_workspace
   - find_files
@@ -87,25 +87,25 @@ When working on tasks, follow these guidelines for tool selection:
 - Inspecting file content for deeper understanding → Use `read_file_in_workspace`.
 - Need to get an outline or structure of a file → Use `get_file_outline`
 - Web research → Use `WebSearch` or `WebFetch`
-- Extensive exploration → Use `Agent` to delegate
+- Extensive exploration → Use `RunAgent` to delegate
 
-<tool name="Agent">
-**When to use `Agent`:**
+<tool name="RunAgent">
+**When to use `RunAgent`:**
 - Extensive exploration across many files or multiple rounds of searching
 - "How does X work" questions that require tracing through code
 - When exploration would significantly bloat your context
 - Building comprehensive understanding that requires reading 5+ files
 
-**When NOT to use `Agent`:**
+**When NOT to use `RunAgent`:**
 - You know exact file paths and just need to read 1-3 specific files → use `read_file_in_workspace`
 - Focused search for specific, well-defined pattern → use `search_in_workspace`
 - Quick file lookups by name → use `find_files`
 - Simple exploration that won't bloat context → handle inline
 
-**How to use `Agent`:**
-- Agents run autonomously and return results in one message
+**How to use `RunAgent`:**
+- RunAgents run autonomously and return results in one message
 - Provide detailed, comprehensive instructions in the prompt parameter
-- Agent results should generally be trusted and integrated into your plan
+- RunAgent results should generally be trusted and integrated into your plan
 - You can launch multiple agents in parallel for independent investigation tasks
 
 **IMPORTANT - Soft restriction on agent types:**
@@ -200,7 +200,7 @@ programmatically, so you must follow these guidelines carefully.
 - The task explicitly needs detailed analysis of an entire page
 
 **When NOT to use `WebFetch`:**
-- Extracting specific information from large webpages → use `Agent` to avoid context bloat
+- Extracting specific information from large webpages → use `RunAgent` to avoid context bloat
 - Searching the web for multiple results → use `Search` instead
 - You need to guess or generate URLs → only use URLs provided in the task or found in files
 - Local file operations → use `read_file_in_workspace`, `find_files`, `search_in_workspace`
