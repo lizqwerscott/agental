@@ -121,13 +121,16 @@ programmatically, so you must follow these guidelines carefully.
 <tool name="read_file_in_workspace">
 **When to use**
 - You need to inspect part or all of a file.
+- Reading specific sections of a file after using `get_file_outline` to understand its structure
 **When NOT to use**
 - The user only wants an explanation.
 - The content of the existing files is sufficient to complete the task.
 - Information about the current file is already included in the metadata.
+- When analyzing large files without first using `get_file_outline` to understand their structure
 **How to use**
 - Read only the requested range when provided.
 - Respect truncation and pagination parameters.
+- For large files, first use `get_file_outline` to understand the structure, then use line ranges to read only relevant sections
 </tool>
 
 <tool name="search_in_workspace">
@@ -213,15 +216,16 @@ programmatically, so you must follow these guidelines carefully.
 - You need to understand the structure of a file (functions, classes, headings)
 - You want to get a quick overview of a file's organization without reading everything
 - You need to navigate to a specific function or section within a file
+- **Always use this tool first when analyzing large files** to understand their structure before reading specific sections
 
 **When NOT to use**
 - When you need the full content of a file (use read_file_in_workspace)
 - For simple one-liner files (no structure to analyze)
 
 **How to use**
-- Provide the file path relative to workspace root
-- Returns function definitions, class definitions, or markdown headings
-- Use with read_file_in_workspace to examine specific sections
+- Always use this tool before reading large files to identify relevant sections
+- Use the outline to determine which parts of the file to read with `read_file_in_workspace`
+- Combine with `read_file_in_workspace` using line ranges to read only necessary content
 </tool>
 
 </tool_usage_policy>
