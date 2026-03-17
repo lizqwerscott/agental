@@ -870,9 +870,81 @@ Examples: '\\.py$' for Python files, 'src/.*\\.js$' for JS files in src/, 'test.
 
 
 ;;; outline tool
-
 (declare-function imenu--flatten-index-alist "imenu")
 (declare-function imenu--make-index-alist "imenu")
+
+(declare-function treesit-buffer-root-node "treesit")
+(declare-function treesit-language-at "treesit")
+(declare-function treesit-parent-until "treesit")
+(declare-function treesit-node-text "treesit")
+(declare-function treesit-node-start "treesit")
+
+(declare-function semantic-tag-start "semantic")
+(declare-function semantic-tag-name "semantic")
+(declare-function semantic-tag-class "semantic")
+(declare-function semantic-fetch-tags "semantic")
+
+(defun agental-tool--detect-engine ()
+  "Detect the most appropriate parsing engine for the current buffer.
+Returns one of `treesit', `semantic', or `imenu'."
+  (cond
+   ((and (fboundp 'treesit-parser-list) (treesit-parser-list))
+    'treesit)
+   ((and (bound-and-true-p semantic-mode) (fboundp 'semantic-fetch-tags))
+    'semantic)
+   (t 'imenu)))
+
+(defun agental-tool--list-treesit ()
+  "List tags using Tree-sitter."
+  (let ((root (treesit-buffer-root-node (treesit-language-at (point-min))))
+        (node-filter "\\(class\\|function\\|method\\)_definition$\\|tag$\\|assignment$")
+        (flat-tags nil))
+    (cl-labels ((flatten-tree (tree)
+                  (let ((node (car tree))
+                        (children (cdr tree)))
+                    (when (and node (not (equal node root)))
+                      (let ((type (treesit-node-type node)))
+                        (when (or (not (string-match-p "assignment" type))
+                                  (not (treesit-parent-until
+                                        node
+                                        (lambda (p) (string-match-p "class\\|function\\|method" (treesit-node-type p))))))
+                          (let ((name-node (or (treesit-node-child-by-field-name node "name")
+                                               (treesit-node-child-by-field-name node "key")
+                                               (treesit-node-child node 0))))
+                            (push (list (treesit-node-text name-node t)
+                                        :class (cond
+                                                ((string-match-p "function\\|method" type) "function")
+                                                ((string-match-p "class" type) "class")
+                                                ((string-match-p "assignment" type) "variable")
+                                                (t type))
+                                        :line (line-number-at-pos (treesit-node-start node)))
+                                  flat-tags)))))
+                    (dolist (child children)
+                      (flatten-tree child)))))
+      (flatten-tree (treesit-induce-sparse-tree root node-filter))
+      (reverse flat-tags))))
+
+(defun agental-tool--list-semantic ()
+  "Extract structural tags from the current buffer using Semantic."
+  (mapcar (lambda (tag)
+            (list (semantic-tag-name tag)
+                  :class (semantic-tag-class tag)
+                  :line (line-number-at-pos (semantic-tag-start tag))))
+          (semantic-fetch-tags)))
+
+(defun agental-tool--list-imenu ()
+  "Extract structural tags from the current buffer using Imenu."
+  (cl-loop for (current . rest) on (cdr (imenu--flatten-index-alist (imenu--make-index-alist) t))
+           for pos = (marker-position (cdr current))
+           for line = (when pos
+                        (line-number-at-pos pos))
+           collect (let* ((value (substring-no-properties (car current)))
+                          (parts (split-string value ":"))
+                          (type (car parts))
+                          (name (cadr parts)))
+                     (if (and type name)
+                         (list name :class type :line line)
+                       (list name :line line)))))
 
 (defun agental-tool--get-file-outline (path)
   "Return a string representation of the outline for PATH.
@@ -883,16 +955,12 @@ in the format: function_name (line X)."
   (when-let* ((path (file-truename path))
               (buffer (find-file-noselect path)))
     (with-current-buffer buffer
-      (string-join
-       (cl-loop for (current . rest) on (cdr (imenu--flatten-index-alist (imenu--make-index-alist) t))
-                for pos = (marker-position (cdr current))
-                for line = (when pos
-                             (line-number-at-pos pos))
-                collect (concat (substring-no-properties (car current))
-                                " (line "
-                                (number-to-string line)
-                                ")"))
-       "\n"))))
+      (let* ((engine (agental-tool--detect-engine))
+             (tags (pcase engine
+                     ('treesit (agental-tool--list-treesit))
+                     ('semantic (agental-tool--list-semantic))
+                     ('imenu (agental-tool--list-imenu)))))
+        (format "[Engine: %s]\n\n%s" engine (pp-to-string tags))))))
 
 (defun agental-tool-get-file-outline-tool (path)
   "Get the outline (structure) of a file.
@@ -919,7 +987,8 @@ outline with function/class names and their line numbers."
  "Get the outline (structure) of a file.
 
 Returns a string containing the file's outline with function/class names and their line numbers.
-The outline is generated from the imenu index."
+The outline is generated using the most appropriate parsing engine (treesit, semantic, or imenu).
+The output format is: [Engine: engine_name] followed by a pretty-printed list of tags."
  :args (list
         '(:name "path" :type string :description "Path to the file to analyze"))
  :category "agental")
