@@ -212,6 +212,18 @@ properties persist through refontification."
                'font-lock-face face-prop org-buffer))
             (setq pos (or next (1- (point-max))))))))))
 
+(defun agental-tool--resolve-path (path)
+  "Resolve PATH relative to workspace root.
+If PATH is absolute, return it as-is. If PATH is relative and a project context
+is available, expand it relative to the project directory. Otherwise return
+PATH."
+  (let* ((project-metadata (and agental--context
+                                (agental-context-metadata-project-metadata agental--context)))
+         (project-dir (cdr project-metadata)))
+    (if (and project-dir (not (file-name-absolute-p path)))
+        (expand-file-name path project-dir)
+      path)))
+
 
 ;;; glob-tool
 
@@ -262,35 +274,41 @@ considered."
 
 Arguments:
   PATTERN (string):The glob pattern to match, e.g. \"src/**/*.el\" or \"*.org\".
-  DIR-PATH (string, optional): Directory in which to search.
+  DIR-PATH (string, optional): Directory in which to search, relative to
+workspace root.
   CASE-SENSITIVE (boolean, optional): If non-nil, matching is case-sensitive.
   RESPECT-GIT-IGNORE (boolean, optional): If non-nil, obey .gitignore rules.
   RESPECT-AI-IGNORE (boolean, optional): If non-nil, obey .aiignore rules.
 
 Returns a list of absolute file paths, sorted by modification time (newest
 first). If no files are found, returns nil and displays a message."
-  (let* ((dir dir-path)
-         (default-directory (file-name-as-directory dir))
-         ;; Adjust pattern case if case-insensitive search
-         (pattern (if (and (not case-sensitive)
-                           (string-match-p "[A-Z]" pattern))
-                      (downcase pattern)
-                    pattern))
-         (files (file-expand-wildcards pattern t))
-         (filtered (agental-tool--apply-ignore-rules
-                    files dir
-                    (or respect-git-ignore t)
-                    (or respect-ai-ignore t)))
-         (sorted (agental-tool--glob-sort-files filtered))
+  (let* ((dir (agental-tool--resolve-path dir-path))
          (successp t)
          (res))
-    (setq res
-          (if (null sorted)
-              (format "No files found matching: %s in %s" dir pattern)
-            (format "Found %d files matching '%s' (sorted by modification time):\n%s"
-                    (length sorted)
-                    pattern
-                    (string-join sorted "\n"))))
+    (if (file-directory-p dir)
+        (setq successp nil
+              res (format "Directory does not exist: %s" dir))
+      (let* ((default-directory (file-name-as-directory dir))
+             ;; Adjust pattern case if case-insensitive search
+             (pattern (if (and (not case-sensitive)
+                               (string-match-p "[A-Z]" pattern))
+                          (downcase pattern)
+                        pattern))
+             (files (file-expand-wildcards pattern t))
+             (filtered (agental-tool--apply-ignore-rules
+                        files dir
+                        (or respect-git-ignore t)
+                        (or respect-ai-ignore t)))
+             (sorted (agental-tool--glob-sort-files filtered)))
+        (setq res
+              (if (null sorted)
+                  (format "No files found matching: %s in %s" dir pattern)
+                (format "Found %d files matching '%s' (sorted by modification time):\n%s"
+                        (length sorted)
+                        pattern
+                        (string-join sorted "\n"))))
+
+        res))
     (agental-tool--insert-tool-call (format "~find_files~ '%s' in %s"
                                             pattern
                                             (if dir
@@ -300,8 +318,7 @@ first). If no files are found, returns nil and displays a message."
                                               "workspace root"))
                                     "text"
                                     res
-                                    successp)
-    res))
+                                    successp)))
 
 ;; Register the tool with GPTel
 (gptel-make-tool
@@ -319,7 +336,7 @@ Uses Emacs' file-expand-wildcards with .gitignore and .aiignore support."
                 :description "The glob pattern to match, e.g. '**/*.el' or '*.org'")
         '(:name "dir-path"
                 :type string
-                :description "Optional directory path to search within")
+                :description "directory path to search within, relative to workspace root")
         '(:name "case-sensitive"
                 :type boolean
                 :description "Whether the search is case-sensitive (default: false)"
@@ -395,11 +412,11 @@ RESPECT-AI (boolean, optional): If non-nil, obey .aiignore rules."
   "List directory contents for DIR-PATH, respecting ignore patterns.
 
 Arguments:
-  DIR-PATH (string): The directory path to list.
+  DIR-PATH (string): The directory path to list, relative to workspace root.
   IGNORE (list of string): List of glob patterns to ignore.
   RESPECT-GIT-IGNORE (boolean): Whether to respect .gitignore (default: t).
   RESPECT-AI-IGNORE (boolean): Whether to respect .aiignore (default: t)."
-  (let* ((dir (or dir-path default-directory))
+  (let* ((dir (agental-tool--resolve-path dir-path))
          (successp t)
          (res))
     (setq res
@@ -446,7 +463,7 @@ Directories are listed first, then files sorted alphabetically."
  :args (list
         '(:name "dir-path"
                 :type string
-                :description "The path to the directory to list")
+                :description "The path to the directory to list, relative to workspace root")
         '(:name "ignore"
                 :type array
                 :description "List of glob patterns to ignore"
@@ -655,12 +672,7 @@ Returns the file contents as a string, with optional
 offset/limit/show-line-numbers processing. For symlinks, returns the target
 path instead of following the link. Signals an error if the file is not
 found in the workspace."
-  (let* ((project-metadata (and agental--context
-                                (agental-context-metadata-project-metadata agental--context)))
-         (project-dir (cdr project-metadata))
-         (full-path (if (and project-dir (not (file-name-absolute-p path)))
-                        (expand-file-name path project-dir)
-                      (file-truename path)))
+  (let* ((full-path (agental-tool--resolve-path path))
          (res)
          (successp t))
     (condition-case err
@@ -775,18 +787,11 @@ match.
 
 Returns formatted search results as a string. Considers workspace
 context including any pending changes, creations, or deletions."
-  (let* ((project-metadata (and agental--context
-                                (agental-context-metadata-project-metadata agental--context)))
-         (project-dir (cdr project-metadata))
-         (search-path (if path
-                          (if (file-name-absolute-p path)
-                              (file-truename path)
-                            (expand-file-name path project-dir))
-                        project-dir))
+  (let* ((search-path (agental-tool--resolve-path path))
          (successp t)
          (res))
     (setq res
-          (if (and search-path (file-exists-p search-path))
+          (if (and search-path (file-directory-p search-path))
               (condition-case err
                   (let* ((rg-command (agental-tools-ripgrep-search pattern
                                                                    search-path
@@ -811,7 +816,7 @@ context including any pending changes, creations, or deletions."
                  (setq successp nil)
                  (error-message-string err)))
             (setq successp nil)
-            (format "Path does not exist: %s" search-path)))
+            (format "Path %s does not exist or not dir" search-path)))
     (agental-tool--insert-tool-call (format "~search~ (%s) in %s%s"
                                             pattern
                                             (if (and search-path (file-exists-p search-path))
@@ -844,7 +849,7 @@ context including any pending changes, creations, or deletions."
     "path"
     :type string
     :optional t
-    :description "Directory or file to search, relative to workspace root (defaults to workspace root)")
+    :description "Directory or file to search, relative to workspace root")
    (:name
     "file_regexp"
     :type string
@@ -952,8 +957,7 @@ Returns one of `treesit', `semantic', or `imenu'."
 The outline is generated from the imenu index and includes the name and
 line number of each item. Returns a string with each item on a separate line
 in the format: function_name (line X)."
-  (when-let* ((path (file-truename path))
-              (buffer (find-file-noselect path)))
+  (when-let* ((buffer (find-file-noselect path)))
     (with-current-buffer buffer
       (let* ((engine (agental-tool--detect-engine))
              (tags (pcase engine
@@ -965,16 +969,19 @@ in the format: function_name (line X)."
 (defun agental-tool-get-file-outline-tool (path)
   "Get the outline (structure) of a file.
 
-PATH is the file path to analyze. Returns a string containing the file's
-outline with function/class names and their line numbers."
-  (let ((successp t)
+PATH is the file path to analyze, relative to workspace root. Returns a string
+containing the file's outline with function/class names and their line numbers."
+  (let ((path (agental-tool--resolve-path path))
+        (successp t)
         res)
     (condition-case err
-        (setq res (agental-tool--get-file-outline path))
+        (if (file-exists-p path)
+            (setq res (agental-tool--get-file-outline path))
+          (setq res (format "Path %s is not exists" path)))
       (error
        (setq successp nil)
        (setq res (error-message-string err))))
-    (let* ((file-link (format "[[file:%s][%s]]" (file-truename path) (file-name-nondirectory path))))
+    (let* ((file-link (format "[[file:%s][%s]]" path (file-name-nondirectory path))))
       (agental-tool--insert-tool-call (format "~get_file_outline~ (%s)" file-link)
                                       "text"
                                       (or res "No outline available for this file.")
@@ -990,7 +997,7 @@ Returns a string containing the file's outline with function/class names and the
 The outline is generated using the most appropriate parsing engine (treesit, semantic, or imenu).
 The output format is: [Engine: engine_name] followed by a pretty-printed list of tags."
  :args (list
-        '(:name "path" :type string :description "Path to the file to analyze"))
+        '(:name "path" :type string :description "Path to the file to analyze, relative to workspace root"))
  :category "agental")
 
 
@@ -1305,7 +1312,7 @@ cleared with the command `agental-tool--edit-clear-overlay'."
 
 CALLBACK is the callback to return a value to the loop.
 
-PATH is the path to the file.
+PATH is the path to the file, relative to workspace root.
 
 EDITS is a vector of edit operations, each containing :old_string and
 :new_string. For compatibility with LLMs that don't support array
@@ -1318,12 +1325,7 @@ fails.
 Returns nil on success. Signals an error if the file is not found or if the edit
 operation fails."
   (condition-case err
-      (let* ((project-metadata (and agental--context
-                                    (agental-context-metadata-project-metadata agental--context)))
-             (project-dir (cdr project-metadata))
-             (full-path (if (and project-dir (not (file-name-absolute-p path)))
-                            (expand-file-name path project-dir)
-                          (file-truename path))))
+      (let* ((full-path (agental-tool--resolve-path path)))
         (pcase-let* ((`(,content . ,new-content) (agental-tool--edit-file full-path edits))
                      (diff-text (agental-tool--generate-patch-diff path content new-content))
                      (info (gptel-fsm-info gptel--fsm-last))
@@ -1347,7 +1349,7 @@ Returns success or error message based on user action and edit results."
  :confirm nil
  :include nil
  :args
- `((:name "path" :type string :description "Path to the file in workspace")
+ `((:name "path" :type string :description "Path to the file in workspace, relative to workspace root")
    (:name
     "edits"
     :type array
@@ -1496,12 +1498,7 @@ CONTENT is the complete new content for the file.
 Use with caution as it will overwrite existing files without warning.
 Handles text content with proper encoding."
   (condition-case err
-      (let* ((project-metadata (and agental--context
-                                    (agental-context-metadata-project-metadata agental--context)))
-             (project-dir (cdr project-metadata))
-             (full-path (if (and project-dir (not (file-name-absolute-p path)))
-                            (expand-file-name path project-dir)
-                          (file-truename path))))
+      (let* ((full-path (agental-tool--resolve-path path)))
         (let* ((info (gptel-fsm-info gptel--fsm-last))
                (where (or (plist-get info :tracking-marker)
                           (plist-get info :position))))
